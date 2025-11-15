@@ -3,276 +3,224 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Super Chirk — Mini Platformer (Boss Orbit + Fling)</title>
+<title>Super Chirk — Mini Platformer (Fixed + Orbit + Laser)</title>
 <style>
-  html,body{height:100%;margin:0;background:#000;display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto}
-  canvas{background:#000;image-rendering:pixelated}
-  #ui{position:fixed;left:12px;top:12px;color:#fff}
-  button{padding:8px 12px;margin:6px}
+html,body{height:100%;margin:0;background:#000;display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto}
+canvas{background:#000;image-rendering:pixelated}
+#ui{position:fixed;left:12px;top:12px;color:#fff}
+button{padding:8px 12px;margin:6px}
 </style>
 </head>
 <body>
 <canvas id="game" width="960" height="540"></canvas>
 <div id="ui"></div>
-
 <script>
 // ---------- Globals ----------
-let canvas = null, ctx = null;
-let gameState = "menu";
-let currentLevel = 1;
-let unlockedLevels = JSON.parse(localStorage.getItem("unlockedLevels") || "[1]");
-let game = { time: 0 };
-let paused = false;
-let FRAME = 0;
-
-let bgm = null, bossMusic = null, cutsceneMusic = null;
-let inCutscene = false, cutsceneTimer = 0;
-const cutsceneDialogue = [
-  "wow",
-  "you really made it this far",
-  "It seems that your DEKIRKINATION took you pretty far.",
-  "but no matter.",
-  "your journey ends NOW"
-];
-
-let player = { x: 50, y: 240, w: 32, h: 48, vx: 0, vy: 0, onGround: false, facing: 1, health: 3, lives: 3, invulnerable: 0 };
-let enemies = [];
-let fireballs = [];
-let orbiters = [];
-let lasers = [];
-let flags = [];
-let camera = { x: 0, y: 0 };
-
-const GRAVITY = 0.8, MAX_FALL = 18;
-const FRICTION = 0.88;
-const WALK_ACCEL = 0.35, RUN_ACCEL = 0.6, MAX_WALK = 3.5, MAX_RUN = 6;
-const JUMP_VY = -16;
-const JUMP_HOR_BOOST = 2.5;
-
-const input = { left: false, right: false, jump: false, run: false };
-window.addEventListener('keydown', e => {
-  if (e.key === 'ArrowLeft') input.left = true;
-  if (e.key === 'ArrowRight') input.right = true;
-  if (e.key.toLowerCase() === 'z') input.jump = true;
-  if (e.key.toLowerCase() === 'x') input.run = true;
+let canvas=null,ctx=null,gameState="menu",currentLevel=1;
+let unlockedLevels=JSON.parse(localStorage.getItem("unlockedLevels")||"[1]");
+let game={time:0},paused=false,FRAME=0;
+let player={x:50,y:240,w:32,h:48,vx:0,vy:0,onGround:false,facing:1,health:3,lives:3,invulnerable:0};
+let enemies=[],fireballs=[],orbiters=[],lasers=[],flags=[];
+let camera={x:0};
+const GRAVITY=0.8,MAX_FALL=18,FRICTION=0.88;
+const WALK_ACCEL=0.35,RUN_ACCEL=0.6,MAX_WALK=3.5,MAX_RUN=6,JUMP_VY=-16,JUMP_HOR_BOOST=2.5;
+const input={left:false,right:false,jump:false,run:false};
+window.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft') input.left=true;
+  if(e.key==='ArrowRight') input.right=true;
+  if(e.key.toLowerCase()==='z') input.jump=true;
+  if(e.key.toLowerCase()==='x') input.run=true;
 });
-window.addEventListener('keyup', e => {
-  if (e.key === 'ArrowLeft') input.left = false;
-  if (e.key === 'ArrowRight') input.right = false;
-  if (e.key.toLowerCase() === 'z') input.jump = false;
-  if (e.key.toLowerCase() === 'x') input.run = false;
+window.addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft') input.left=false;
+  if(e.key==='ArrowRight') input.right=false;
+  if(e.key.toLowerCase()==='z') input.jump=false;
+  if(e.key.toLowerCase()==='x') input.run=false;
 });
 
-const LEVEL_DATA = [
-  {
-    platforms: [{ x: 0, y: 360, w: 8000, h: 40 }, { x: 800, y: 300, w: 400, h: 16 }, { x: 1600, y: 250, w: 400, h: 16 }],
-    enemies: [{ x: 420, patrol: [380, 520] }],
-    flags: [{ x: 4000, w: 32, h: 80 }]
+// ---------- Level data ----------
+const LEVEL_DATA=[
+  {platforms:[{x:0,y:360,w:8000,h:40},{x:800,y:300,w:400,h:16},{x:1600,y:250,w:400,h:16}],
+   enemies:[{x:420,patrol:[380,520]}],
+   flags:[{x:4000,w:32,h:80}]
   },
-  {
-    platforms: [{ x: 0, y: 360, w: 8000, h: 40 }, { x: 600, y: 300, w: 400, h: 16 }, { x: 1400, y: 260, w: 400, h: 16 }, { x: 2200, y: 220, w: 400, h: 16 }],
-    enemies: [{ x: 800, patrol: [760, 940] }, { x: 1800, patrol: [1720, 1840] }],
-    flags: [{ x: 4200, w: 32, h: 80 }]
+  {platforms:[{x:0,y:360,w:8000,h:40},{x:600,y:300,w:400,h:16},{x:1400,y:260,w:400,h:16},{x:2200,y:220,w:400,h:16}],
+   enemies:[{x:800,patrol:[760,940]},{x:1800,patrol:[1720,1840]}],
+   flags:[{x:4200,w:32,h:80}]
   },
-  {
-    platforms: [{ x: 0, y: 360, w: 8000, h: 40 }, { x: 900, y: 300, w: 400, h: 16 }, { x: 1900, y: 260, w: 400, h: 16 }, { x: 2800, y: 220, w: 400, h: 16 }],
-    enemies: [{ boss: true, x: 1200, hp: 30, dir: 1 }],
-    flags: [{ x: 4600, w: 32, h: 128 }]
+  {platforms:[{x:0,y:360,w:8000,h:40},{x:900,y:300,w:400,h:16},{x:1900,y:260,w:400,h:16},{x:2800,y:220,w:400,h:16}],
+   enemies:[{boss:true,x:1200,hp:30,dir:1}],
+   flags:[{x:4600,w:32,h:128}]
   }
 ];
 
-let imgPlayer = new Image(); imgPlayer.src = "chirk.png";
-let imgEnemy = new Image(); imgEnemy.src = "cheese.png";
-let imgBoss = new Image(); imgBoss.src = "supercheese.png";
-let imgBall = new Image(); imgBall.src = "BALL.png";
-let imgFlag = new Image(); imgFlag.src = "flag.png";
-let imgBG = new Image(); imgBG.src = "bg.png";
-let imgGround = new Image(); imgGround.src = "g.png";
-let imgBlaster = new Image(); imgBlaster.src = "blaster.png";
-let imgLaser = new Image(); imgLaser.src = "laser.png";
+// ---------- Images ----------
+let imgPlayer=new Image(), imgEnemy=new Image(), imgBoss=new Image(), imgBall=new Image(), imgFlag=new Image(), imgBG=new Image(), imgGround=new Image(), imgBlaster=new Image(), imgLaser=new Image();
+imgPlayer.src="chirk.png"; imgEnemy.src="cheese.png"; imgBoss.src="supercheese.png"; imgBall.src="BALL.png"; imgFlag.src="flag.png";
+imgBG.src="bg.png"; imgGround.src="g.png"; imgBlaster.src="blaster.png"; imgLaser.src="laser.png";
+const allImages=[imgPlayer,imgEnemy,imgBoss,imgBall,imgFlag,imgBG,imgGround,imgBlaster,imgLaser];
+let imagesLoaded=0;
 
-function worldToScreen(x) { return Math.round(x - camera.x); }
-function unlockLevel(lv) { if (lv <= LEVEL_DATA.length && !unlockedLevels.includes(lv)) { unlockedLevels.push(lv); localStorage.setItem("unlockedLevels", JSON.stringify(unlockedLevels)); } }
+// Wait for images to load
+allImages.forEach(img=>{
+  img.onload=()=>{imagesLoaded++; if(imagesLoaded===allImages.length){startGame();}};
+  img.onerror=()=>{imagesLoaded++; if(imagesLoaded===allImages.length){startGame();}}; // continue even if missing
+});
 
-function resetLevel(levelNum) {
-  const L = LEVEL_DATA[levelNum - 1];
-  enemies = []; fireballs = []; flags = []; orbiters = []; lasers = [];
-  player.x = 60; player.y = 200; player.vx = 0; player.vy = 0; player.onGround = false; player.invulnerable = 0;
+// ---------- Helpers ----------
+function worldToScreen(x){return Math.round(x-camera.x);}
+function unlockLevel(lv){if(lv<=LEVEL_DATA.length&&!unlockedLevels.includes(lv)){unlockedLevels.push(lv);localStorage.setItem("unlockedLevels",JSON.stringify(unlockedLevels));}}
 
-  if (L.enemies) for (const e of L.enemies) {
-    if (e.boss) {
-      const ground = L.platforms[0];
-      const bx = Math.max(ground.x + 16, Math.min(e.x, ground.x + ground.w - 80));
-      enemies.push({
-        boss: true,
-        x: bx,
-        y: ground.y - 64,
-        w: 64,
-        h: 64,
-        hp: e.hp || 30,
-        cooldown: 0,
-        dir: e.dir || 1,
-        hitCooldown: 0,
-        orbitStartFrame: FRAME + 300,
-        orbitActive: false,
-        directFireCooldownBase: 12
-      });
+// ---------- Reset Level ----------
+function resetLevel(levelNum){
+  const L=LEVEL_DATA[levelNum-1]; enemies=[];fireballs=[];orbiters=[];lasers=[];flags=[];
+  player.x=60;player.y=200;player.vx=0;player.vy=0;player.onGround=false;player.invulnerable=0;
+  if(L.enemies) L.enemies.forEach(e=>{
+    if(e.boss){
+      const ground=L.platforms[0];
+      const bx=Math.max(ground.x+16,Math.min(e.x,ground.x+ground.w-80));
+      enemies.push({boss:true,x:bx,y:ground.y-64,w:64,h:64,hp:e.hp||30,cooldown:0,dir:e.dir||1,hitCooldown:0,directFireCooldownBase:12,slowUntilFrame:0,orbitCooldown:900,nextLaserFrame:FRAME+999999});
     } else {
-      const plat = L.platforms.find(p => e.x >= p.x && e.x <= p.x + p.w) || L.platforms[0];
-      const ex = Math.max(plat.x + 4, Math.min(e.x, plat.x + plat.w - 32));
-      const patrolMin = Math.max(e.patrol[0], plat.x);
-      const patrolMax = Math.min(e.patrol[1], plat.x + plat.w - 32);
-      enemies.push({ boss: false, x: ex, y: plat.y - 32, w: 32, h: 32, patrolMin: patrolMin, patrolMax: patrolMax, dir: 1, speed: 1.2 });
+      const plat=L.platforms.find(p=>e.x>=p.x&&e.x<=p.x+p.w)||L.platforms[0];
+      const ex=Math.max(plat.x+4,Math.min(e.x,plat.x+plat.w-32));
+      const patrolMin=Math.max(e.patrol[0],plat.x);
+      const patrolMax=Math.min(e.patrol[1],plat.x+plat.w-32);
+      enemies.push({boss:false,x:ex,y:plat.y-32,w:32,h:32,patrolMin,patrolMax,dir:1,speed:1.2});
+    }
+  });
+  if(L.flags) L.flags.forEach(f=>{
+    const plat=L.platforms.find(p=>f.x>=p.x&&f.x<=p.x+p.w)||L.platforms[0];
+    flags.push({x:f.x,y:plat.y-f.h,w:f.w,h:f.h,visible:(levelNum!==3)});
+  });
+}
+
+// ---------- Orbit attack ----------
+function spawnOrbitAroundPlayer(bossRef,count=16,radius=80,lifetimeFrames=300,speed=0.08){
+  bossRef.slowUntilFrame=Math.max(bossRef.slowUntilFrame||0,FRAME+lifetimeFrames);
+  orbiters.push({boss:bossRef,t:0,count,radius,life:lifetimeFrames,speed,createdAtFrame:FRAME});
+}
+
+// ---------- Laser ----------
+function spawnLaserFromBoss(bossRef,lifeFrames=90){
+  const blasterX=bossRef.x+bossRef.w/2;
+  const blasterY=bossRef.y+bossRef.h/2;
+  lasers.push({owner:bossRef,sx:blasterX,sy:blasterY,life:lifeFrames,maxLife:lifeFrames,createdAt:FRAME,width:16});
+}
+
+function pointToSegmentDist(px,py,x1,y1,x2,y2){
+  const vx=x2-x1,vy=y2-y1,wx=px-x1,wy=py-y1;
+  const c=(wx*vx+wy*vy)/(vx*vx+vy*vy||1);
+  const t=Math.max(0,Math.min(1,c));
+  const rx=x1+vx*t,ry=y1+vy*t;
+  const dx=px-rx,dy=py-ry;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+
+// ---------- Main Game Loop ----------
+function runLevel(levelNum){
+  const L=LEVEL_DATA[levelNum-1];
+
+  // Background
+  if(imgBG.complete&&imgBG.width>0){
+    const tileW=imgBG.width;
+    const startX=-((camera.x%tileW+tileW)%tileW)-tileW;
+    for(let bx=startX;bx<canvas.width;bx+=tileW) ctx.drawImage(imgBG,bx,0);
+  } else ctx.fillStyle="#80c0ff",ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Player movement
+  const actualAccel=input.run?RUN_ACCEL:WALK_ACCEL;
+  if(input.left) player.vx-=actualAccel;
+  if(input.right) player.vx+=actualAccel;
+  const maxSpd=input.run?MAX_RUN:MAX_WALK;
+  player.vx=Math.max(-maxSpd,Math.min(maxSpd,player.vx));
+  if(input.jump&&player.onGround){player.vy=JUMP_VY;player.onGround=false; if(input.right) player.vx+=JUMP_HOR_BOOST; else if(input.left) player.vx-=JUMP_HOR_BOOST;}
+  player.vx*=FRICTION; player.vy+=GRAVITY; if(player.vy>MAX_FALL) player.vy=MAX_FALL;
+  player.x+=player.vx; player.y+=player.vy;
+
+  // Platform collision
+  player.onGround=false;
+  for(const p of L.platforms){
+    if(imgGround.complete&&imgGround.width>0){
+      for(let gx=p.x;gx<p.x+p.w;gx+=imgGround.width) ctx.drawImage(imgGround,worldToScreen(gx),p.y,imgGround.width,p.h);
+    } else ctx.fillStyle="#6b4",ctx.fillRect(worldToScreen(p.x),p.y,p.w,p.h);
+    if(player.x+player.w>p.x&&player.x<p.x+p.w&&player.y+player.h>p.y&&player.y<p.y+p.h){
+      const prevX=player.x-player.vx,prevY=player.y-player.vy;
+      if(prevY+player.h<=p.y){player.y=p.y-player.h;player.vy=0;player.onGround=true;}
+      else if(prevY>=p.y+p.h){player.y=p.y+p.h;player.vy=0;}
+      else{if(prevX+player.w<=p.x){player.x=p.x-player.w;player.vx=0;} else if(prevX>=p.x+p.w){player.x=p.x+p.w;player.vx=0;}}
     }
   }
 
-  if (L.flags) for (const f of L.flags) {
-    const plat = L.platforms.find(p => f.x >= p.x && f.x <= p.x + p.w) || L.platforms[0];
-    flags.push({ x: f.x, y: plat.y - f.h, w: f.w, h: f.h, visible: (levelNum !== 3) });
-  }
-}
+  // Camera
+  camera.x=player.x-canvas.width/2+player.w/2; if(camera.x<0) camera.x=0;
 
-function spawnOrbitAroundPlayer(bossRef, count = 16, radius = 80, lifetimeFrames = 300, speed = 0.08) {
-  orbiters.push({ boss: bossRef, t: 0, count, radius, life: lifetimeFrames, speed, createdAtFrame: FRAME, flinged: false });
-}
-
-function spawnLaserFromBoss(bossRef, lifeFrames = 90) {
-  const blasterX = bossRef.x + bossRef.w / 2;
-  const blasterY = bossRef.y + bossRef.h / 2;
-  lasers.push({ owner: bossRef, sx: blasterX, sy: blasterY, life: lifeFrames, maxLife: lifeFrames, createdAt: FRAME, width: 16 });
-}
-
-function pointToSegmentDist(px, py, x1, y1, x2, y2) {
-  const vx = x2 - x1, vy = y2 - y1;
-  const wx = px - x1, wy = py - y1;
-  const c = (wx * vx + wy * vy) / (vx * vx + vy * vy || 1);
-  const t = Math.max(0, Math.min(1, c));
-  const rx = x1 + vx * t, ry = y1 + vy * t;
-  const dx = px - rx, dy = py - ry;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-// ---------- Main runLevel ----------
-function runLevel(levelNum) {
-  const L = LEVEL_DATA[levelNum - 1];
-  if (imgBG.complete && imgBG.width > 0) {
-    const tileW = imgBG.width;
-    const startX = -((camera.x % tileW + tileW) % tileW) - tileW;
-    for (let bx = startX; bx < canvas.width; bx += tileW) ctx.drawImage(imgBG, bx, 0);
-  } else ctx.fillStyle = '#80c0ff', ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const actualAccel = input.run ? RUN_ACCEL : WALK_ACCEL;
-  if (input.left) player.vx -= actualAccel;
-  if (input.right) player.vx += actualAccel;
-  const maxSpd = input.run ? MAX_RUN : MAX_WALK;
-  player.vx = Math.max(-maxSpd, Math.min(maxSpd, player.vx));
-
-  if (input.jump && player.onGround) {
-    player.vy = JUMP_VY;
-    player.onGround = false;
-    if (input.right) player.vx += JUMP_HOR_BOOST;
-    else if (input.left) player.vx -= JUMP_HOR_BOOST;
-  }
-  player.vx *= FRICTION; player.vy += GRAVITY;
-  if (player.vy > MAX_FALL) player.vy = MAX_FALL;
-  player.x += player.vx; player.y += player.vy;
-
-  player.onGround = false;
-  for (const p of L.platforms) {
-    if (imgGround.complete && imgGround.width > 0) {
-      for (let gx = p.x; gx < p.w + p.x; gx += imgGround.width) ctx.drawImage(imgGround, worldToScreen(gx), p.y, imgGround.width, p.h);
-    } else ctx.fillStyle = '#6b4', ctx.fillRect(worldToScreen(p.x), p.y, p.w, p.h);
-
-    if (player.x + player.w > p.x && player.x < p.x + p.w && player.y + player.h > p.y && player.y < p.y + p.h) {
-      const prevX = player.x - player.vx, prevY = player.y - player.vy;
-      if (prevY + player.h <= p.y) { player.y = p.y - player.h; player.vy = 0; player.onGround = true; }
-      else if (prevY >= p.y + p.h) { player.y = p.y + p.h; player.vy = 0; }
-      else { if (prevX + player.w <= p.x) { player.x = p.x - player.w; player.vx = 0; } else if (prevX >= p.x + p.w) { player.x = p.x + p.w; player.vx = 0; } }
-    }
-  }
-  camera.x = player.x - canvas.width / 2 + player.w / 2;
-  if (camera.x < 0) camera.x = 0;
-
-  if (imgPlayer.complete) ctx.drawImage(imgPlayer, worldToScreen(player.x), player.y, player.w, player.h);
-  else ctx.fillStyle = 'cyan', ctx.fillRect(worldToScreen(player.x), player.y, player.w, player.h);
+  // Draw player
+  if(imgPlayer.complete) ctx.drawImage(imgPlayer,worldToScreen(player.x),player.y,player.w,player.h);
+  else ctx.fillStyle="cyan",ctx.fillRect(worldToScreen(player.x),player.y,player.w,player.h);
 
   // ---------- Enemies & Boss ----------
-  for (let i = enemies.length - 1; i >= 0; i--) {
-    const e = enemies[i];
-    if (e.boss) {
-      // ---------- BOSS LOGIC (Orbit + Fling + Slow + Fire rate) ----------
-      const ground = L.platforms[0];
-      const baseSpeed = 1.6;
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i];
+    if(e.boss){
+      const ground=L.platforms[0];
+      e.x+=0.8*e.dir; if(e.x<ground.x+16){e.dir=1;e.x=ground.x+16;} if(e.x+e.w>ground.x+ground.w-16){e.dir=-1;e.x=ground.x+ground.w-16-e.w;}
+      
+      // Boss orbit every 15 seconds (~900 frames)
+      e.orbitCooldown--; if(e.orbitCooldown<=0){spawnOrbitAroundPlayer(e,20,110,300,0.08); e.orbitCooldown=900;}
 
-      const orbitInterval = 900;
-      const orbitDuration = 300;
-
-      const inOrbit = FRAME >= e.orbitStartFrame && FRAME < e.orbitStartFrame + orbitDuration;
-
-      const currentSpeed = inOrbit ? baseSpeed * 0.3 : baseSpeed;
-      e.x += currentSpeed * e.dir;
-      if (e.x < ground.x + 16) { e.dir = 1; e.x = ground.x + 16; }
-      if (e.x + e.w > ground.x + ground.w - 16) { e.dir = -1; e.x = ground.x + ground.w - 16 - e.w; }
-
-      const directBase = inOrbit ? 240 : 12;
-      if (!e.cooldown || e.cooldown <= 0) {
-        const dx = (player.x + player.w / 2) - (e.x + e.w / 2);
-        const dy = (player.y + player.h / 2) - (e.y + e.h / 2);
-        const dist = Math.sqrt(dx*dx+dy*dy)||1;
-        const speed = 6.2;
-        fireballs.push({ x:e.x+e.w/2, y:e.y+e.h/2, vx:dx/dist*speed, vy:dy/dist*speed, life:240, owner:'boss' });
-        e.cooldown = directBase;
+      // Direct fire (faster when not orbiting)
+      const directBase=(FRAME<(e.slowUntilFrame||0))?240:12;
+      if(!e.cooldown||e.cooldown<=0){
+        const dx=(player.x+player.w/2)-(e.x+e.w/2);
+        const dy=(player.y+player.h/2)-(e.y+e.h/2);
+        const dist=Math.sqrt(dx*dx+dy*dy)||1; const speed=6.2;
+        fireballs.push({x:e.x+e.w/2,y:e.y+e.h/2,vx:dx/dist*speed,vy:dy/dist*speed,life:240,owner:'boss'});
+        e.cooldown=directBase;
       }
-      e.cooldown = Math.max(0, (e.cooldown||0)-1);
+      e.cooldown=Math.max(0,(e.cooldown||0)-1);
 
-      if (inOrbit && !e.orbitActive) { e.orbitActive = true; e.orbitStartFrameActual = FRAME; spawnOrbitAroundPlayer(e, 20, 110, orbitDuration, 0.08); }
-
-      for (let oi=orbiters.length-1; oi>=0; oi--) {
-        const orb = orbiters[oi];
-        orb.t += orb.speed;
-        const cx = player.x+player.w/2;
-        const cy = player.y+player.h/2;
-
-        for (let k=0;k<orb.count;k++){
-          const ang = orb.t + k*(Math.PI*2/orb.count);
-          const ox = cx + Math.cos(ang)*orb.radius;
-          const oy = cy + Math.sin(ang)*orb.radius;
-
-          if(imgBall.complete) ctx.drawImage(imgBall, worldToScreen(ox-8), oy-8, 16,16);
-          else ctx.fillStyle='orange', ctx.fillRect(worldToScreen(ox-8), oy-8,16,16);
-
-          if(FRAME >= e.orbitStartFrameActual+orbitDuration && !orb.flinged){
-            const flingSpeed = 6;
-            fireballs.push({ x:ox, y:oy, vx:Math.cos(ang)*flingSpeed, vy:Math.sin(ang)*flingSpeed, life:180, owner:'boss' });
-          }
-
-          if(player.invulnerable<=0 && player.x<ox+8 && player.x+player.w>ox-8 && player.y<oy+8 && player.y+player.h>oy-8){
-            player.health-=1; player.invulnerable=90; player.x=Math.max(10, player.x-60);
-            try{new Audio('ow.mp3').play();}catch(e){}
-          }
-        }
-        if(FRAME >= e.orbitStartFrameActual+orbitDuration) orb.flinged=true;
-        if(orb.life<=0) orbiters.splice(oi,1);
-      }
-
-      if(FRAME >= e.orbitStartFrame+orbitInterval){ e.orbitStartFrame=FRAME; e.orbitActive=false; }
-
-      if(imgBoss.complete) ctx.drawImage(imgBoss, worldToScreen(e.x), e.y, e.w, e.h);
-      else ctx.fillStyle='purple', ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h);
-      ctx.fillStyle='black'; ctx.font='16px sans-serif';
-      ctx.fillText('Boss HP: '+e.hp, worldToScreen(e.x), e.y-8);
+      // Draw boss
+      if(imgBoss.complete) ctx.drawImage(imgBoss,worldToScreen(e.x),e.y,e.w,e.h); else ctx.fillStyle="purple",ctx.fillRect(worldToScreen(e.x),e.y,e.w,e.h);
+      ctx.fillStyle="black"; ctx.font="16px sans-serif"; ctx.fillText("Boss HP: "+e.hp,worldToScreen(e.x),e.y-8);
     } else {
-      e.x += e.speed * e.dir;
-      if(e.x<e.patrolMin){e.dir=1;e.x=e.patrolMin;}
-      if(e.x>e.patrolMax){e.dir=-1;e.x=e.patrolMax;}
-      if(imgEnemy.complete) ctx.drawImage(imgEnemy, worldToScreen(e.x), e.y, e.w, e.h);
-      else ctx.fillStyle='red', ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h);
+      e.x+=e.speed*e.dir;if(e.x<e.patrolMin){e.dir=1;e.x=e.patrolMin;} if(e.x>e.patrolMax){e.dir=-1;e.x=e.patrolMax;}
+      if(imgEnemy.complete) ctx.drawImage(imgEnemy,worldToScreen(e.x),e.y,e.w,e.h); else ctx.fillStyle="red",ctx.fillRect(worldToScreen(e.x),e.y,e.w,e.h);
     }
   }
 
-  // ---------- Fireballs, lasers, player collisions, flags, HUD ---------- 
-  // (keep your existing code unchanged for these sections)
+  // Orbiters
+  for(let oi=orbiters.length-1;oi>=0;oi--){
+    const orb=orbiters[oi]; orb.t+=orb.speed; orb.life--;
+    const cx=player.x+player.w/2,cy=player.y+player.h/2;
+    for(let k=0;k<orb.count;k++){
+      const ang=orb.t+(k*(Math.PI*2/orb.count));
+      const ox=cx+Math.cos(ang)*orb.radius, oy=cy+Math.sin(ang)*orb.radius;
+      if(imgBall.complete) ctx.drawImage(imgBall,worldToScreen(ox-8),oy-8,16,16); else ctx.fillStyle="orange",ctx.fillRect(worldToScreen(ox-8),oy-8,16,16);
+      if(player.invulnerable<=0 && player.x<ox+8 && player.x+player.w>ox-8 && player.y<oy+8 && player.y+player.h>oy-8){
+        player.health--; player.invulnerable=90; player.x=Math.max(10,player.x-60); if(player.health<=0){player.lives--; if(player.lives<=0){gameState="levelselect";player.lives=3;player.health=3;return;} else resetLevel(levelNum);}
+      }
+    }
+    if(orb.life<=0) orbiters.splice(oi,1);
+  }
+
+  // invulnerability timer
+  if(player.invulnerable>0) player.invulnerable--;
+
+  // HUD
+  ctx.fillStyle="black"; ctx.font="16px sans-serif"; ctx.fillText("Level "+levelNum,10,20); ctx.fillText("Health: "+player.health+" Lives: "+player.lives,10,40);
 }
+
+// ---------- Game Loop ----------
+function gameLoop(now){
+  FRAME++; const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now; game.time+=dt; ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(gameState==="playing" && !paused) runLevel(currentLevel);
+  else if(gameState==="menu"){ctx.fillStyle="black";ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle="white";ctx.font="28px sans-serif";ctx.fillText("SUPER CHIRK",50,50);}
+  requestAnimationFrame(gameLoop);
+}
+let lastTime=performance.now();
+
+// ---------- Init ----------
+function startGame(){canvas=document.getElementById('game');ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;resetLevel(currentLevel);requestAnimationFrame(gameLoop);}
 </script>
 </body>
 </html>
