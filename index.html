@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Super Chirk — Mini Platformer (Fixed + Boss Orbit)</title>
+<title>Super Chirk — Mini Platformer (Fixed + Boss Orbit + Laser)</title>
 <style>
   html,body{height:100%;margin:0;background:#000;display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto}
   canvas{background:#000;image-rendering:pixelated}
@@ -16,9 +16,7 @@
 <div id="ui"></div>
 
 <script>
-// === Super Chirk — Complete single-file version (Fixed) ===
-// Added: faster boss fire rate, orbit attack (16), larger level planes, boss HP = 30
-// Preserves previously applied fixes.
+// === Super Chirk — Complete single-file version (Fixed + Orbit + Laser) ===
 
 // ---------- Globals ----------
 let canvas = null, ctx = null;
@@ -27,6 +25,7 @@ let currentLevel = 1;
 let unlockedLevels = JSON.parse(localStorage.getItem("unlockedLevels") || "[1]");
 let game = { time: 0 };
 let paused = false;
+let FRAME = 0; // global frame counter
 
 // Music & cutscene
 let bgm = null, bossMusic = null, cutsceneMusic = null;
@@ -42,12 +41,11 @@ const cutsceneDialogue = [
 // ---------- Player / World ----------
 let player = { x: 50, y: 240, w: 32, h: 48, vx: 0, vy: 0, onGround: false, facing: 1, health: 3, lives: 3, invulnerable: 0 };
 let enemies = [];
-let fireballs = []; // generic projectiles and orbit spheres
+let fireballs = []; // direct boss projectiles and generic bullets
+let orbiters = [];  // orbiting rings (visual + collision)
+let lasers = [];    // active giant laser beams
 let flags = [];
 let camera = { x: 0, y: 0 };
-
-// Orbiters (separate structure for orbiting attack)
-let orbiters = []; // {bossRef, t, count, radius, speed, life}
 
 // Gameplay constants
 const GRAVITY = 0.8, MAX_FALL = 18;
@@ -72,8 +70,7 @@ window.addEventListener('keyup', e => {
 });
 
 // ---------- Level data (platforms, enemies, flags) ----------
-// NOTE: ground plane widths increased drastically to make levels WAY bigger.
-// Flags moved further out to match bigger planes.
+// Plane widths made WAY bigger as requested
 const LEVEL_DATA = [
   {
     platforms: [{ x: 0, y: 360, w: 8000, h: 40 }, { x: 800, y: 300, w: 400, h: 16 }, { x: 1600, y: 250, w: 400, h: 16 }],
@@ -87,7 +84,7 @@ const LEVEL_DATA = [
   },
   {
     platforms: [{ x: 0, y: 360, w: 8000, h: 40 }, { x: 900, y: 300, w: 400, h: 16 }, { x: 1900, y: 260, w: 400, h: 16 }, { x: 2800, y: 220, w: 400, h: 16 }],
-    enemies: [{ boss: true, x: 1200, hp: 30, dir: 1 }], // boss HP set to 30 here
+    enemies: [{ boss: true, x: 1200, hp: 30, dir: 1 }], // boss HP = 30
     flags: [{ x: 4600, w: 32, h: 128 }]
   }
 ];
@@ -100,6 +97,8 @@ let imgBall = new Image(); imgBall.src = "BALL.png";
 let imgFlag = new Image(); imgFlag.src = "flag.png";
 let imgBG = new Image(); imgBG.src = "bg.png";
 let imgGround = new Image(); imgGround.src = "g.png";
+let imgBlaster = new Image(); imgBlaster.src = "blaster.png"; // for laser origin sprite
+let imgLaser = new Image(); imgLaser.src = "laser.png";       // beam graphic
 
 function worldToScreen(x) { return Math.round(x - camera.x); }
 
@@ -114,7 +113,7 @@ function unlockLevel(lv) {
 // Reset a level: spawn enemies and flags and place them properly on platforms
 function resetLevel(levelNum) {
   const L = LEVEL_DATA[levelNum - 1];
-  enemies = []; fireballs = []; flags = []; orbiters = [];
+  enemies = []; fireballs = []; flags = []; orbiters = []; lasers = [];
   player.x = 60; player.y = 200; player.vx = 0; player.vy = 0; player.onGround = false; player.invulnerable = 0;
 
   // Spawn enemies — ensure correct y (on top of the platform) and clamp patrol ranges to platform
@@ -123,7 +122,6 @@ function resetLevel(levelNum) {
       // Boss: place on ground platform (first platform assumed ground)
       const ground = L.platforms[0];
       const bx = Math.max(ground.x + 16, Math.min(e.x, ground.x + ground.w - 80));
-      // ensure boss HP uses specified value (or fallback to 30)
       enemies.push({
         boss: true,
         x: bx,
@@ -131,11 +129,14 @@ function resetLevel(levelNum) {
         w: 64,
         h: 64,
         hp: (e.hp || 30),
-        cooldown: 30,        // faster initial cooldown
+        cooldown: 0,
         dir: e.dir || 1,
         hitCooldown: 0,
-        directFireCooldownBase: 20, // direct fire faster (frames)
-        orbitCooldown: 300 // frames between orbit attacks (~5s at 60fps)
+        // frame-based cooldowns:
+        directFireCooldownBase: 12, // default direct-fire base (frames) -> very fast
+        slowUntilFrame: 0,          // when spiral slows direct fire, set to FRAME + duration
+        orbitCooldown: 240,         // frames until next orbit (~4s)
+        nextLaserFrame: FRAME + 999999 // placeholder; set once hp<20
       });
     } else {
       // Normal enemy: find platform underneath or default to ground
@@ -155,31 +156,41 @@ function resetLevel(levelNum) {
   }
 }
 
-// ---------- Draw level select ----------
-function drawLevelSelect() {
-  ctx.fillStyle = "black"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "white"; ctx.font = "24px sans-serif"; ctx.fillText("LEVEL SELECT", 50, 50);
-  unlockedLevels.forEach((lv, i) => ctx.fillText("Level " + lv, 60, 120 + i * 40));
-  ctx.font = "14px sans-serif";
-  ctx.fillText("Press 1/2/3 to start unlocked level. Press Z to return to menu.", 50, canvas.height - 40);
-}
-
-// ---------- Music init ----------
-function initMusic() {
-  bgm = new Audio("bgm.mp3"); bgm.loop = true; bgm.volume = 0.5;
-  bossMusic = new Audio("boss.mp3"); bossMusic.loop = true; bossMusic.volume = 0.7;
-  cutsceneMusic = new Audio("cut.mp3"); cutsceneMusic.loop = false; cutsceneMusic.volume = 0.8;
-  // attempt play (may be blocked until interaction)
-  try { bgm.play().catch(() => { }); } catch (e) { }
-}
-
 // ---------- Orbit helpers ----------
-function spawnOrbitAroundPlayer(bossRef, count = 16, radius = 80, lifetime = 360, speed = 0.06) {
-  // create an orb entry that will be rendered/updated each frame
-  orbiters.push({ boss: bossRef, t: 0, count, radius, life: lifetime, speed, createdAt: game.time });
+function spawnOrbitAroundPlayer(bossRef, count = 16, radius = 80, lifetimeFrames = 420, speed = 0.08) {
+  // bossRef slowdown: reduce direct fire to once every 4 seconds (240 frames)
+  bossRef.slowUntilFrame = Math.max(bossRef.slowUntilFrame || 0, FRAME + lifetimeFrames);
+  // push orbit entry
+  orbiters.push({ boss: bossRef, t: 0, count, radius, life: lifetimeFrames, speed, createdAtFrame: FRAME });
 }
 
-// ---------- Main runLevel (complete, with orbit update) ----------
+// ---------- Laser helpers ----------
+function spawnLaserFromBoss(bossRef, lifeFrames = 90) {
+  // spawn a laser object which stores source (blaster) and target (player)
+  const blasterX = bossRef.x + bossRef.w / 2;
+  const blasterY = bossRef.y + bossRef.h / 2;
+  lasers.push({
+    owner: bossRef,
+    sx: blasterX, sy: blasterY,
+    life: lifeFrames,
+    maxLife: lifeFrames,
+    createdAt: FRAME,
+    width: 16 // beam half-width (used for collision)
+  });
+}
+
+// point-to-segment distance (used for laser collision)
+function pointToSegmentDist(px, py, x1, y1, x2, y2) {
+  const vx = x2 - x1, vy = y2 - y1;
+  const wx = px - x1, wy = py - y1;
+  const c = (wx * vx + wy * vy) / (vx * vx + vy * vy || 1);
+  const t = Math.max(0, Math.min(1, c));
+  const rx = x1 + vx * t, ry = y1 + vy * t;
+  const dx = px - rx, dy = py - ry;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+// ---------- Main runLevel (complete) ----------
 function runLevel(levelNum) {
   const L = LEVEL_DATA[levelNum - 1];
 
@@ -221,7 +232,6 @@ function runLevel(levelNum) {
       for (let gx = p.x; gx < p.x + p.w; gx += imgGround.width) {
         ctx.drawImage(imgGround, worldToScreen(gx), p.y, imgGround.width, p.h);
       }
-      // draw leftover piece if any (avoid stretching)
       const remainder = p.w % imgGround.width;
       if (remainder > 0) {
         ctx.drawImage(imgGround, 0, 0, remainder, imgGround.height, worldToScreen(p.x + Math.floor(p.w / imgGround.width) * imgGround.width), p.y, remainder, p.h);
@@ -262,33 +272,42 @@ function runLevel(levelNum) {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
     if (e.boss) {
-      // Boss patrol along ground platform (we used ground as first platform when placing)
       const ground = L.platforms[0];
-      // boss moves a bit faster horizontally to make orbit effect interesting
       e.x += 1.6 * e.dir;
-      // clamp boss within ground bounds (keep a margin)
       if (e.x < ground.x + 16) { e.dir = 1; e.x = ground.x + 16; }
       if (e.x + e.w > ground.x + ground.w - 16) { e.dir = -1; e.x = ground.x + ground.w - 16 - e.w; }
 
-      // DIRECT Shoot toward player at cooldown (faster)
-      if (e.cooldown <= 0) {
+      // Setup laser timer when HP drops below 20 (frame-based)
+      if (e.hp < 20 && (!e.nextLaserFrame || e.nextLaserFrame > FRAME + 200000)) {
+        e.nextLaserFrame = FRAME + 20 * 60; // 20 seconds in frames (assuming ~60 FPS)
+      }
+
+      // DIRECT Shoot toward player at cooldown. Respect slowUntilFrame (slows to 240 frames = 4s).
+      const directBase = (FRAME < (e.slowUntilFrame || 0)) ? 240 : (e.directFireCooldownBase || 12);
+      if (!e.cooldown || e.cooldown <= 0) {
         const dx = (player.x + player.w / 2) - (e.x + e.w / 2);
         const dy = (player.y + player.h / 2) - (e.y + e.h / 2);
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const speed = 6.2; // slightly faster projectile
+        const speed = 6.2;
         fireballs.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, vx: dx / dist * speed, vy: dy / dist * speed, life: 240, owner: 'boss' });
-        // shorter cooldown for more aggressive fire rate
-        e.cooldown = e.directFireCooldownBase || 18;
+        e.cooldown = directBase;
       }
-      e.cooldown = Math.max(0, e.cooldown - 1);
+      e.cooldown = Math.max(0, (e.cooldown || 0) - 1);
 
       // ORBIT attack: spawn an orbit every time orbitCooldown reaches 0
-      e.orbitCooldown = (e.orbitCooldown || 300) - 1;
+      e.orbitCooldown = (e.orbitCooldown || 240) - 1;
       if (e.orbitCooldown <= 0) {
-        // spawn an orb that will create the orbit around player
-        spawnOrbitAroundPlayer(e, 16, 90, 420, 0.08); // 16 spheres, radius 90, life ~7s, speed
-        // reset cooldown (slightly randomize)
-        e.orbitCooldown = 240 + Math.floor(Math.random() * 120); // ~4-6 seconds
+        // spawn orbit: sets boss slowUntilFrame for orbit duration
+        spawnOrbitAroundPlayer(e, 20, 110, 420, 0.08); // 20 orbiters for fuller circle
+        // reset cooldown to 4-6 seconds
+        e.orbitCooldown = 240 + Math.floor(Math.random() * 120);
+      }
+
+      // LASER attack: spawn when hp<20 and timer reached
+      if (e.hp < 20 && e.nextLaserFrame && FRAME >= e.nextLaserFrame) {
+        // spawn laser lasting ~1.5s (90 frames)
+        spawnLaserFromBoss(e, 90);
+        e.nextLaserFrame = FRAME + 20 * 60; // schedule next in 20 seconds
       }
 
       // Draw boss
@@ -298,7 +317,6 @@ function runLevel(levelNum) {
       // Draw boss HP above boss
       ctx.fillStyle = 'black'; ctx.font = '16px sans-serif';
       ctx.fillText('Boss HP: ' + e.hp, worldToScreen(e.x), e.y - 8);
-
     } else {
       // Normal enemy AI — patrol and clamp to platform patrol range
       e.x += e.speed * e.dir;
@@ -316,32 +334,28 @@ function runLevel(levelNum) {
     const orb = orbiters[oi];
     orb.t += orb.speed;
     orb.life--;
-    // boss-synced side offset: oscillate based on boss.dir and game.time
+    // bias oscillation based on boss.dir and game time
     let bossSide = 0;
     if (orb.boss && typeof orb.boss.x === 'number') {
-      // Use boss.dir to bias which side the ring oscillates toward
       bossSide = Math.sin(game.time * 1.5) * 60 * (orb.boss.dir || 1);
     }
-    // center around player, with boss-synced side offset
+    // center around player
     const cx = player.x + player.w / 2 + bossSide;
     const cy = player.y + player.h / 2;
-
-    // spawn visible orbit points (as independent projectiles for collision)
+    // draw orbit points and check collision
     for (let k = 0; k < orb.count; k++) {
       const ang = orb.t + (k * (Math.PI * 2 / orb.count));
       const ox = cx + Math.cos(ang) * orb.radius;
       const oy = cy + Math.sin(ang) * orb.radius;
-      // render
       if (imgBall.complete) ctx.drawImage(imgBall, worldToScreen(ox - 8), oy - 8, 16, 16);
       else { ctx.fillStyle = 'orange'; ctx.fillRect(worldToScreen(ox - 8), oy - 8, 16, 16); }
 
-      // collision with player (treat as hit every frame it's overlapping)
+      // collision with player
       if (player.invulnerable <= 0 && player.x < ox + 8 && player.x + player.w > ox - 8 && player.y < oy + 8 && player.y + player.h > oy - 8) {
         player.health -= 1;
         player.invulnerable = 90;
         player.x = Math.max(10, player.x - 60);
         try { new Audio('ow.mp3').play(); } catch (e) {}
-        // do not remove orb; orbit continues until life ends
         if (player.health <= 0) {
           player.lives -= 1;
           if (player.lives <= 0) {
@@ -356,8 +370,68 @@ function runLevel(levelNum) {
         }
       }
     }
-
     if (orb.life <= 0) orbiters.splice(oi, 1);
+  }
+
+  // ---------- Lasers update & draw ----------
+  for (let li = lasers.length - 1; li >= 0; li--) {
+    const Ls = lasers[li];
+    Ls.life--;
+    // compute blaster source (follow boss)
+    const boss = Ls.owner;
+    const sx = boss.x + boss.w / 2;
+    const sy = boss.y + boss.h / 2;
+    // target player center
+    const tx = player.x + player.w / 2;
+    const ty = player.y + player.h / 2;
+    const vx = tx - sx, vy = ty - sy;
+    const dist = Math.sqrt(vx * vx + vy * vy) || 1;
+    const ang = Math.atan2(vy, vx);
+
+    // draw blaster sprite at boss
+    if (imgBlaster.complete) ctx.drawImage(imgBlaster, worldToScreen(sx - 16), sy - 16, 32, 32);
+    else { ctx.fillStyle = 'gray'; ctx.fillRect(worldToScreen(sx - 16), sy - 16, 32, 32); }
+
+    // draw beam as stretched image (if available) or rectangle
+    if (imgLaser.complete && imgLaser.width > 0) {
+      // drawImage with rotation: translate to source, rotate, draw with length = dist
+      ctx.save();
+      ctx.translate(worldToScreen(sx), sy);
+      ctx.rotate(ang);
+      ctx.drawImage(imgLaser, 0, -12, dist, 24); // beam height ~24
+      ctx.restore();
+    } else {
+      // fallback thick rectangle beam
+      ctx.save();
+      ctx.translate(worldToScreen(sx), sy);
+      ctx.rotate(ang);
+      ctx.fillStyle = 'rgba(255,40,40,0.9)';
+      ctx.fillRect(0, -8, dist, 16);
+      ctx.restore();
+    }
+
+    // damage check: approximate by distance from player center to beam segment
+    const d = pointToSegmentDist(player.x + player.w / 2, player.y + player.h / 2, sx, sy, tx, ty);
+    if (d <= (Ls.width + Math.max(player.w, player.h) * 0.5) && player.invulnerable <= 0) {
+      // player hit by laser
+      player.health -= 1;
+      player.invulnerable = 90;
+      try { new Audio('ow.mp3').play(); } catch (e) {}
+      if (player.health <= 0) {
+        player.lives -= 1;
+        if (player.lives <= 0) {
+          try { bossMusic && bossMusic.pause(); } catch (e) {}
+          gameState = 'levelselect';
+          player.lives = 3; player.health = 3;
+          return;
+        } else {
+          resetLevel(levelNum);
+          return;
+        }
+      }
+    }
+
+    if (Ls.life <= 0) lasers.splice(li, 1);
   }
 
   // ---------- Fireballs (direct projectiles) ----------
@@ -377,7 +451,6 @@ function runLevel(levelNum) {
       if (player.health <= 0) {
         player.lives -= 1;
         if (player.lives <= 0) {
-          // Game over -> back to level select
           try { bossMusic && bossMusic.pause(); } catch (e) { }
           gameState = 'levelselect';
           player.lives = 3; player.health = 3;
@@ -397,7 +470,6 @@ function runLevel(levelNum) {
     if (!e.boss) {
       // stomp detection
       if (player.vy > 0 && player.y + player.h <= e.y + 12 && player.x + player.w > e.x && player.x < e.x + e.w) {
-        // kill enemy
         try { new Audio('owe.mp3').play(); } catch (err) { }
         enemies.splice(i, 1);
         player.vy = -8;
@@ -419,40 +491,18 @@ function runLevel(levelNum) {
         }
       }
     } else {
-      // ---------- BOSS INTERACTIONS (fixed) ----------
-      // Stomp boss
-      if (
-        player.vy > 0 &&
-        player.y + player.h <= e.y + 10 &&
-        player.x + player.w > e.x &&
-        player.x < e.x + e.w &&
-        e.hitCooldown <= 0
-      ) {
+      // ---------- BOSS INTERACTIONS ----------
+      if (player.vy > 0 && player.y + player.h <= e.y + 10 && player.x + player.w > e.x && player.x < e.x + e.w && e.hitCooldown <= 0) {
         e.hp--;
         e.hitCooldown = 20;
         player.vy = -10;
-
         try { new Audio("owe.mp3").play(); } catch {}
-
         if (e.hp <= 0) {
-          try {
-            bossMusic.pause();
-            bossMusic.currentTime = 0;
-          } catch {}
-
-          // switch to win screen
+          try { bossMusic.pause(); bossMusic.currentTime = 0; } catch {}
           gameState = "win";
-
-          // prevent physics from continuing
-          player.vx = 0;
-          player.vy = 0;
-
-          // clear enemies and projectiles
-          enemies = [];
-          fireballs = [];
-          orbiters = [];
-
-          return; // stop the rest of runLevel
+          player.vx = 0; player.vy = 0;
+          enemies = []; fireballs = []; orbiters = []; lasers = [];
+          return;
         }
       }
 
@@ -477,19 +527,12 @@ function runLevel(levelNum) {
   }
 
   // ---------- Flags: show only after enemies dead (in boss level) ----------
-  // Determine if any non-boss enemies are alive OR boss is alive
   const bossAlive = enemies.some(e => e.boss && e.hp > 0);
   const normalEnemiesAlive = enemies.some(e => !e.boss);
 
   for (const f of flags) {
-    // For boss level we hid flags on reset; reveal only when boss dead and no normals
-    if (bossAlive || normalEnemiesAlive) {
-      // If flag was visible earlier, keep it hidden until cleared condition
-      f.visible = false;
-    } else {
-      // If no enemies remain, ensure flag visible
-      f.visible = true;
-    }
+    if (bossAlive || normalEnemiesAlive) f.visible = false;
+    else f.visible = true;
 
     if (!f.visible) continue;
 
@@ -498,9 +541,7 @@ function runLevel(levelNum) {
 
     // Player touches flag
     if (player.x + player.w > f.x && player.x < f.x + f.w && player.y + player.h > f.y) {
-      // Unlock next level only if exists
       if (levelNum + 1 <= LEVEL_DATA.length) unlockLevel(levelNum + 1);
-      // Reset next level (or just go to levelselect)
       if (levelNum + 1 <= LEVEL_DATA.length) resetLevel(levelNum + 1);
       gameState = 'levelselect';
     }
@@ -518,27 +559,23 @@ function runLevel(levelNum) {
 
 // ---------- Global key handling (menu/pause/level select) ----------
 function onGlobalKey(e) {
-  // Pause toggle
   if (e.key.toLowerCase() === 'p' && gameState === 'playing') {
     paused = !paused;
     if (paused) { try { bgm && bgm.pause(); bossMusic && bossMusic.pause(); } catch (err) { } }
     else { try { if (currentLevel === 3) bossMusic && bossMusic.play(); else bgm && bgm.play(); } catch (err) { } }
   }
 
-  // Pause -> menu
   if (paused && e.key.toLowerCase() === 'm') {
     paused = false;
     try { bgm && bgm.play(); } catch (err) { }
     gameState = 'menu';
   }
 
-  // Menu -> levelselect
   if (gameState === 'menu' && e.key.toLowerCase() === 'z') {
     gameState = 'levelselect';
     return;
   }
 
-  // Level selection keys
   if (gameState === 'levelselect') {
     if (e.key === '1' && unlockedLevels.includes(1)) {
       currentLevel = 1; resetLevel(1); try { bgm.currentTime = 0; bgm && bgm.play(); } catch (err) { } gameState = 'playing'; return;
@@ -547,14 +584,12 @@ function onGlobalKey(e) {
       currentLevel = 2; resetLevel(2); try { bgm.currentTime = 0; bgm && bgm.play(); } catch (err) { } gameState = 'playing'; return;
     }
     if (e.key === '3' && unlockedLevels.includes(3)) {
-      // Trigger cutscene before level 3
       inCutscene = true;
       cutsceneTimer = 0;
       try { bgm && bgm.pause(); bossMusic && bossMusic.pause(); } catch (err) { }
       gameState = 'cutscene';
       return;
     }
-    // Allow returning to menu
     if (e.key.toLowerCase() === 'z') {
       gameState = 'menu';
       return;
@@ -569,6 +604,7 @@ function gameLoop(now) {
   const dt = Math.min(0.05, (now - lastTime) / 1000);
   lastTime = now;
   game.time += dt;
+  FRAME++;
 
   // clear
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -581,7 +617,12 @@ function gameLoop(now) {
     ctx.font = '16px sans-serif';
     ctx.fillText('Press Z to Start (level select)', 50, 100);
   } else if (gameState === 'levelselect') {
-    drawLevelSelect();
+    // draw level select
+    ctx.fillStyle = "black"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "white"; ctx.font = "24px sans-serif"; ctx.fillText("LEVEL SELECT", 50, 50);
+    unlockedLevels.forEach((lv, i) => ctx.fillText("Level " + lv, 60, 120 + i * 40));
+    ctx.font = "14px sans-serif";
+    ctx.fillText("Press 1/2/3 to start unlocked level. Press Z to return to menu.", 50, canvas.height - 40);
   } else if (gameState === 'cutscene') {
     ctx.fillStyle = 'black'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'white'; ctx.font = '24px sans-serif';
@@ -623,9 +664,16 @@ window.onload = () => {
   resetLevel(1);
   requestAnimationFrame(gameLoop);
 };
+
+// Music init (kept at bottom so images exist earlier)
+function initMusic() {
+  bgm = new Audio("bgm.mp3"); bgm.loop = true; bgm.volume = 0.5;
+  bossMusic = new Audio("boss.mp3"); bossMusic.loop = true; bossMusic.volume = 0.7;
+  cutsceneMusic = new Audio("cut.mp3"); cutsceneMusic.loop = false; cutsceneMusic.volume = 0.8;
+  try { bgm.play().catch(() => {}); } catch (e) {}
+}
 </script>
 </body>
 </html>
 
- 
 
