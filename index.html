@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Super Chirk — Mini Platformer (Fixed)</title>
+<title>Super Chirk — Mini Platformer (Fixed + Boss Orbit)</title>
 <style>
   html,body{height:100%;margin:0;background:#000;display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto}
   canvas{background:#000;image-rendering:pixelated}
@@ -17,6 +17,8 @@
 
 <script>
 // === Super Chirk — Complete single-file version (Fixed) ===
+// Added: faster boss fire rate, orbit attack (16), larger level planes, boss HP = 30
+// Preserves previously applied fixes.
 
 // ---------- Globals ----------
 let canvas = null, ctx = null;
@@ -40,14 +42,18 @@ const cutsceneDialogue = [
 // ---------- Player / World ----------
 let player = { x: 50, y: 240, w: 32, h: 48, vx: 0, vy: 0, onGround: false, facing: 1, health: 3, lives: 3, invulnerable: 0 };
 let enemies = [];
-let fireballs = [];
+let fireballs = []; // generic projectiles and orbit spheres
 let flags = [];
 let camera = { x: 0, y: 0 };
 
+// Orbiters (separate structure for orbiting attack)
+let orbiters = []; // {bossRef, t, count, radius, speed, life}
+
+// Gameplay constants
 const GRAVITY = 0.8, MAX_FALL = 18;
 const FRICTION = 0.88;
 const WALK_ACCEL = 0.35, RUN_ACCEL = 0.6, MAX_WALK = 3.5, MAX_RUN = 6;
-const JUMP_VY = -16; // MEDIUM-HIGH JUMP (user chose A)
+const JUMP_VY = -16; // MEDIUM-HIGH JUMP
 const JUMP_HOR_BOOST = 2.5;
 
 // Input
@@ -66,21 +72,23 @@ window.addEventListener('keyup', e => {
 });
 
 // ---------- Level data (platforms, enemies, flags) ----------
+// NOTE: ground plane widths increased drastically to make levels WAY bigger.
+// Flags moved further out to match bigger planes.
 const LEVEL_DATA = [
   {
-    platforms: [{ x: 0, y: 360, w: 2000, h: 40 }, { x: 300, y: 300, w: 120, h: 16 }, { x: 600, y: 250, w: 120, h: 16 }],
+    platforms: [{ x: 0, y: 360, w: 8000, h: 40 }, { x: 800, y: 300, w: 400, h: 16 }, { x: 1600, y: 250, w: 400, h: 16 }],
     enemies: [{ x: 420, patrol: [380, 520] }],
-    flags: [{ x: 950, w: 32, h: 80 }]
+    flags: [{ x: 4000, w: 32, h: 80 }]
   },
   {
-    platforms: [{ x: 0, y: 360, w: 2000, h: 40 }, { x: 180, y: 300, w: 140, h: 16 }, { x: 480, y: 260, w: 140, h: 16 }, { x: 780, y: 220, w: 140, h: 16 }],
-    enemies: [{ x: 300, patrol: [260, 420] }, { x: 650, patrol: [620, 740] }],
-    flags: [{ x: 950, w: 32, h: 80 }]
+    platforms: [{ x: 0, y: 360, w: 8000, h: 40 }, { x: 600, y: 300, w: 400, h: 16 }, { x: 1400, y: 260, w: 400, h: 16 }, { x: 2200, y: 220, w: 400, h: 16 }],
+    enemies: [{ x: 800, patrol: [760, 940] }, { x: 1800, patrol: [1720, 1840] }],
+    flags: [{ x: 4200, w: 32, h: 80 }]
   },
   {
-    platforms: [{ x: 0, y: 360, w: 2000, h: 40 }, { x: 220, y: 300, w: 120, h: 16 }, { x: 480, y: 260, w: 120, h: 16 }, { x: 740, y: 220, w: 120, h: 16 }],
-    enemies: [{ boss: true, x: 900, hp: 5, dir: 1 }], // boss level: boss stands on ground by resetLevel
-    flags: [{ x: 950, w: 32, h: 128 }]
+    platforms: [{ x: 0, y: 360, w: 8000, h: 40 }, { x: 900, y: 300, w: 400, h: 16 }, { x: 1900, y: 260, w: 400, h: 16 }, { x: 2800, y: 220, w: 400, h: 16 }],
+    enemies: [{ boss: true, x: 1200, hp: 30, dir: 1 }], // boss HP set to 30 here
+    flags: [{ x: 4600, w: 32, h: 128 }]
   }
 ];
 
@@ -106,7 +114,7 @@ function unlockLevel(lv) {
 // Reset a level: spawn enemies and flags and place them properly on platforms
 function resetLevel(levelNum) {
   const L = LEVEL_DATA[levelNum - 1];
-  enemies = []; fireballs = []; flags = [];
+  enemies = []; fireballs = []; flags = []; orbiters = [];
   player.x = 60; player.y = 200; player.vx = 0; player.vy = 0; player.onGround = false; player.invulnerable = 0;
 
   // Spawn enemies — ensure correct y (on top of the platform) and clamp patrol ranges to platform
@@ -115,7 +123,20 @@ function resetLevel(levelNum) {
       // Boss: place on ground platform (first platform assumed ground)
       const ground = L.platforms[0];
       const bx = Math.max(ground.x + 16, Math.min(e.x, ground.x + ground.w - 80));
-      enemies.push({ boss: true, x: bx, y: ground.y - 64, w: 64, h: 64, hp: e.hp || 3, cooldown: 120, dir: e.dir || 1, hitCooldown: 0 });
+      // ensure boss HP uses specified value (or fallback to 30)
+      enemies.push({
+        boss: true,
+        x: bx,
+        y: ground.y - 64,
+        w: 64,
+        h: 64,
+        hp: (e.hp || 30),
+        cooldown: 30,        // faster initial cooldown
+        dir: e.dir || 1,
+        hitCooldown: 0,
+        directFireCooldownBase: 20, // direct fire faster (frames)
+        orbitCooldown: 300 // frames between orbit attacks (~5s at 60fps)
+      });
     } else {
       // Normal enemy: find platform underneath or default to ground
       const plat = L.platforms.find(p => e.x >= p.x && e.x <= p.x + p.w) || L.platforms[0];
@@ -152,7 +173,13 @@ function initMusic() {
   try { bgm.play().catch(() => { }); } catch (e) { }
 }
 
-// ---------- Main runLevel (complete, fixed) ----------
+// ---------- Orbit helpers ----------
+function spawnOrbitAroundPlayer(bossRef, count = 16, radius = 80, lifetime = 360, speed = 0.06) {
+  // create an orb entry that will be rendered/updated each frame
+  orbiters.push({ boss: bossRef, t: 0, count, radius, life: lifetime, speed, createdAt: game.time });
+}
+
+// ---------- Main runLevel (complete, with orbit update) ----------
 function runLevel(levelNum) {
   const L = LEVEL_DATA[levelNum - 1];
 
@@ -174,7 +201,7 @@ function runLevel(levelNum) {
 
   // Jump (higher jump requested)
   if (input.jump && player.onGround) {
-    player.vy = JUMP_VY; // -16 per user's choice A
+    player.vy = JUMP_VY; // -16
     player.onGround = false;
     if (input.right) player.vx += JUMP_HOR_BOOST;
     else if (input.left) player.vx -= JUMP_HOR_BOOST;
@@ -237,28 +264,40 @@ function runLevel(levelNum) {
     if (e.boss) {
       // Boss patrol along ground platform (we used ground as first platform when placing)
       const ground = L.platforms[0];
-      e.x += 1.4 * e.dir;
+      // boss moves a bit faster horizontally to make orbit effect interesting
+      e.x += 1.6 * e.dir;
       // clamp boss within ground bounds (keep a margin)
       if (e.x < ground.x + 16) { e.dir = 1; e.x = ground.x + 16; }
       if (e.x + e.w > ground.x + ground.w - 16) { e.dir = -1; e.x = ground.x + ground.w - 16 - e.w; }
 
-      // Shoot toward player at cooldown
+      // DIRECT Shoot toward player at cooldown (faster)
       if (e.cooldown <= 0) {
         const dx = (player.x + player.w / 2) - (e.x + e.w / 2);
         const dy = (player.y + player.h / 2) - (e.y + e.h / 2);
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const speed = 5.5; // tuned speed
-        fireballs.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, vx: dx / dist * speed, vy: dy / dist * speed, life: 240 });
-        e.cooldown = 60; // fire rate
+        const speed = 6.2; // slightly faster projectile
+        fireballs.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, vx: dx / dist * speed, vy: dy / dist * speed, life: 240, owner: 'boss' });
+        // shorter cooldown for more aggressive fire rate
+        e.cooldown = e.directFireCooldownBase || 18;
       }
       e.cooldown = Math.max(0, e.cooldown - 1);
+
+      // ORBIT attack: spawn an orbit every time orbitCooldown reaches 0
+      e.orbitCooldown = (e.orbitCooldown || 300) - 1;
+      if (e.orbitCooldown <= 0) {
+        // spawn an orb that will create the orbit around player
+        spawnOrbitAroundPlayer(e, 16, 90, 420, 0.08); // 16 spheres, radius 90, life ~7s, speed
+        // reset cooldown (slightly randomize)
+        e.orbitCooldown = 240 + Math.floor(Math.random() * 120); // ~4-6 seconds
+      }
 
       // Draw boss
       if (imgBoss.complete) ctx.drawImage(imgBoss, worldToScreen(e.x), e.y, e.w, e.h);
       else { ctx.fillStyle = 'purple'; ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h); }
 
       // Draw boss HP above boss
-      ctx.fillStyle = 'black'; ctx.font = '16px sans-serif'; ctx.fillText('Boss HP: ' + e.hp, worldToScreen(e.x), e.y - 8);
+      ctx.fillStyle = 'black'; ctx.font = '16px sans-serif';
+      ctx.fillText('Boss HP: ' + e.hp, worldToScreen(e.x), e.y - 8);
 
     } else {
       // Normal enemy AI — patrol and clamp to platform patrol range
@@ -272,7 +311,56 @@ function runLevel(levelNum) {
     }
   }
 
-  // ---------- Fireballs ----------
+  // ---------- Orbiters update & draw ----------
+  for (let oi = orbiters.length - 1; oi >= 0; oi--) {
+    const orb = orbiters[oi];
+    orb.t += orb.speed;
+    orb.life--;
+    // boss-synced side offset: oscillate based on boss.dir and game.time
+    let bossSide = 0;
+    if (orb.boss && typeof orb.boss.x === 'number') {
+      // Use boss.dir to bias which side the ring oscillates toward
+      bossSide = Math.sin(game.time * 1.5) * 60 * (orb.boss.dir || 1);
+    }
+    // center around player, with boss-synced side offset
+    const cx = player.x + player.w / 2 + bossSide;
+    const cy = player.y + player.h / 2;
+
+    // spawn visible orbit points (as independent projectiles for collision)
+    for (let k = 0; k < orb.count; k++) {
+      const ang = orb.t + (k * (Math.PI * 2 / orb.count));
+      const ox = cx + Math.cos(ang) * orb.radius;
+      const oy = cy + Math.sin(ang) * orb.radius;
+      // render
+      if (imgBall.complete) ctx.drawImage(imgBall, worldToScreen(ox - 8), oy - 8, 16, 16);
+      else { ctx.fillStyle = 'orange'; ctx.fillRect(worldToScreen(ox - 8), oy - 8, 16, 16); }
+
+      // collision with player (treat as hit every frame it's overlapping)
+      if (player.invulnerable <= 0 && player.x < ox + 8 && player.x + player.w > ox - 8 && player.y < oy + 8 && player.y + player.h > oy - 8) {
+        player.health -= 1;
+        player.invulnerable = 90;
+        player.x = Math.max(10, player.x - 60);
+        try { new Audio('ow.mp3').play(); } catch (e) {}
+        // do not remove orb; orbit continues until life ends
+        if (player.health <= 0) {
+          player.lives -= 1;
+          if (player.lives <= 0) {
+            try { bossMusic && bossMusic.pause(); } catch (e) {}
+            gameState = 'levelselect';
+            player.lives = 3; player.health = 3;
+            return;
+          } else {
+            resetLevel(levelNum);
+            return;
+          }
+        }
+      }
+    }
+
+    if (orb.life <= 0) orbiters.splice(oi, 1);
+  }
+
+  // ---------- Fireballs (direct projectiles) ----------
   for (let i = fireballs.length - 1; i >= 0; i--) {
     const b = fireballs[i];
     b.x += b.vx; b.y += b.vy; b.life--;
@@ -331,7 +419,7 @@ function runLevel(levelNum) {
         }
       }
     } else {
-      // ---------- BOSS INTERACTIONS (fixed: single damage, no duplicate block) ----------
+      // ---------- BOSS INTERACTIONS (fixed) ----------
       // Stomp boss
       if (
         player.vy > 0 &&
@@ -362,6 +450,7 @@ function runLevel(levelNum) {
           // clear enemies and projectiles
           enemies = [];
           fireballs = [];
+          orbiters = [];
 
           return; // stop the rest of runLevel
         }
@@ -537,7 +626,6 @@ window.onload = () => {
 </script>
 </body>
 </html>
-
 
  
 
