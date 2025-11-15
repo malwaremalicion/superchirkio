@@ -170,8 +170,82 @@ function runLevel(levelNum){
   if(imgPlayer.complete) ctx.drawImage(imgPlayer,worldToScreen(player.x),player.y,player.w,player.h);
   else ctx.fillStyle='cyan',ctx.fillRect(worldToScreen(player.x),player.y,player.w,player.h);
 
-  // Enemies and fireballs
-  // ...[This section continues as in previous merged version]...
+  // --- Enemies & Fireballs ---
+  for(const e of enemies){
+    if(e.boss){
+      e.x+=e.dir*1; if(e.x<e.patrolMin||e.x>e.patrolMax)e.dir*=-1;
+      if(e.cooldown<=0){
+        const dx=(player.x-e.x); const dy=(player.y-e.y); const dist=Math.sqrt(dx*dx+dy*dy);
+        fireballs.push({x:e.x+e.w/2,y:e.y+e.h/2,vx:dx/dist*5,vy:dy/dist*5,life:200});
+        e.cooldown=60;
+      }
+      e.cooldown--; if(e.hitCooldown>0)e.hitCooldown--;
+      if(imgBoss.complete) ctx.drawImage(imgBoss,worldToScreen(e.x),e.y,e.w,e.h);
+      else ctx.fillStyle='purple',ctx.fillRect(worldToScreen(e.x),e.y,e.w,e.h);
+      ctx.fillStyle='black'; ctx.font='16px sans-serif'; ctx.fillText('Boss HP: '+e.hp,10,60);
+    } else {
+      e.x+=e.speed*e.dir;
+      if(e.x<e.patrolMin||e.x>e.patrolMax)e.dir*=-1;
+      if(imgEnemy.complete) ctx.drawImage(imgEnemy,worldToScreen(e.x),e.y,e.w,e.h);
+      else ctx.fillStyle='red',ctx.fillRect(worldToScreen(e.x),e.y,e.w,e.h);
+    }
+  }
+
+  // Fireball updates
+  for(let i=fireballs.length-1;i>=0;i--){
+    const b=fireballs[i];
+    b.x+=b.vx; b.y+=b.vy; b.life--;
+    if(imgBall.complete) ctx.drawImage(imgBall,worldToScreen(b.x),b.y,16,16);
+    else ctx.fillStyle='orange',ctx.fillRect(worldToScreen(b.x),b.y,16,16);
+    if(b.life<=0) fireballs.splice(i,1);
+
+    if(player.invulnerable<=0 && player.x<b.x+16 && player.x+player.w>b.x && player.y<b.y+16 && player.y+player.h>b.y){
+      player.health--; player.invulnerable=90; player.x=Math.max(10,player.x-60);
+      try{new Audio('ow.mp3').play();}catch{}
+      fireballs.splice(i,1);
+      if(player.health<=0){player.lives--; if(player.lives<=0){gameState='levelselect'; player.lives=3; player.health=3; try{bossMusic.pause(); bgm.play();}catch{}} else resetLevel(levelNum);}
+    }
+  }
+
+  // Enemy collisions
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i];
+    if(!e.boss){
+      if(player.vy>0 && player.y+player.h<e.y+12 && player.x+player.w>e.x && player.x<e.x+e.w){
+        try{ new Audio('owe.mp3').play(); }catch{}
+        enemies.splice(i,1); player.vy=-8; continue;
+      }
+      if(player.invulnerable<=0 && player.x<e.x+e.w && player.x+player.w>e.x && player.y<e.y+e.h && player.y+player.h>e.y){
+        player.health--; player.invulnerable=90; player.x=Math.max(10,player.x-40);
+        try{ new Audio('ow.mp3').play(); }catch{}
+        if(player.health<=0){player.lives--; if(player.lives<=0){gameState='levelselect'; player.lives=3; player.health=3; try{bossMusic.pause(); bgm.play();}catch{}} else resetLevel(levelNum);}
+      }
+    } else {
+      if(player.vy>0 && player.y+player.h<e.y+16 && player.x+player.w>e.x && player.x<e.x+e.w && e.hitCooldown===0){
+        e.hp--; player.vy=-10; e.hitCooldown=15;
+        try{ new Audio('owe.mp3').play(); }catch{}
+        if(e.hp<=0){document.cookie='super_chirk_never_play=1; expires=Fri, 31 Dec 9999 23:59:59 GMT'; gameState='win'; try{bossMusic.pause(); bgm.play();}catch{}}
+      }
+    }
+  }
+
+  // Flags
+  let enemiesAlive=enemies.filter(e=>!e.boss).length;
+  for(const f of flags){
+    if(imgFlag.complete) ctx.drawImage(imgFlag,worldToScreen(f.x),f.y,f.w,f.h);
+    else ctx.fillStyle='yellow',ctx.fillRect(worldToScreen(f.x),f.y,f.w,f.h);
+
+    if(enemiesAlive===0 && player.x+player.w>f.x && player.x<f.x+f.w && player.y+player.h>f.y){
+      unlockLevel(levelNum+1); resetLevel(levelNum+1); gameState='levelselect';
+    }
+  }
+
+  if(player.invulnerable>0) player.invulnerable--;
+
+  // HUD
+  ctx.fillStyle='black'; ctx.font='16px sans-serif';
+  ctx.fillText('Level '+levelNum,10,20);
+  ctx.fillText('Health: '+player.health+'  Lives: '+player.lives,10,40);
 }
 
 // --- Music init ---
