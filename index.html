@@ -1,649 +1,545 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Super Chirk — Final Build</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Super Chirk — Mini Platformer</title>
 <style>
-    body { margin: 0; background: #000; color: white; font-family: sans-serif; }
-    canvas { background: #88ccff; display: block; margin: auto; }
+  html,body{height:100%;margin:0;background:#000;display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto}
+  canvas{background:#000;image-rendering:pixelated}
+  #ui{position:fixed;left:12px;top:12px;color:#fff}
+  button{padding:8px 12px;margin:6px}
 </style>
 </head>
 <body>
-<canvas id="game" width="800" height="480"></canvas>
+<canvas id="game" width="960" height="540"></canvas>
+<div id="ui"></div>
 
 <script>
-/* ============================================
-   SUPER CHIRK — FINAL COMPLETE BUILD
-   ============================================ */
+// === Super Chirk — Complete single-file version ===
+// All original features restored + fixes applied
+// Player jump set to medium-high (vy = -16)
 
-/* --------------------------------------------
-   GLOBALS
--------------------------------------------- */
-let canvas, ctx;
-let lastTime = 0;
-let gameState = "menu";
+// ---------- Globals ----------
+let canvas = null, ctx = null;
+let gameState = "menu"; // menu, levelselect, cutscene, playing, win
 let currentLevel = 1;
-let unlockedLevels = [1];
+let unlockedLevels = JSON.parse(localStorage.getItem("unlockedLevels") || "[1]");
+let game = { time: 0 };
+let paused = false;
 
-let camera = { x: 0 };
+// Music & cutscene
+let bgm = null, bossMusic = null, cutsceneMusic = null;
+let inCutscene = false, cutsceneTimer = 0;
+const cutsceneDialogue = [
+  "wow",
+  "you really made it this far",
+  "It seems that your DEKIRKINATION took you pretty far.",
+  "but no matter.",
+  "your journey ends NOW"
+];
 
-const gravity = 0.7;
-
-let player = {
-    x: 100, y: 0,
-    w: 32, h: 32,
-    vx: 0, vy: 0,
-    onGround: false,
-    health: 3,
-    lives: 3,
-    invulnerable: 0,
-};
-
+// ---------- Player / World ----------
+let player = { x: 50, y: 240, w: 32, h: 48, vx: 0, vy: 0, onGround: false, facing: 1, health: 3, lives: 3, invulnerable: 0 };
 let enemies = [];
 let fireballs = [];
 let flags = [];
-let imagesLoaded = false;
+let camera = { x: 0, y: 0 };
 
-let inCutscene = false;
-let cutsceneTimer = 0;
+const GRAVITY = 0.8, MAX_FALL = 18;
+const FRICTION = 0.88;
+const WALK_ACCEL = 0.35, RUN_ACCEL = 0.6, MAX_WALK = 3.5, MAX_RUN = 6;
+const JUMP_VY = -16; // MEDIUM-HIGH JUMP (user chose A)
+const JUMP_HOR_BOOST = 2.5;
 
-let imgPlayer = new Image();
-let imgEnemy = new Image();
-let imgBoss  = new Image();
-let imgGround= new Image();
-let imgFlag  = new Image();
-let imgBG    = new Image();
-let imgBall  = new Image();
+// Input
+const input = { left: false, right: false, jump: false, run: false };
+window.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft') input.left = true;
+  if (e.key === 'ArrowRight') input.right = true;
+  if (e.key.toLowerCase() === 'z') input.jump = true;
+  if (e.key.toLowerCase() === 'x') input.run = true;
+});
+window.addEventListener('keyup', e => {
+  if (e.key === 'ArrowLeft') input.left = false;
+  if (e.key === 'ArrowRight') input.right = false;
+  if (e.key.toLowerCase() === 'z') input.jump = false;
+  if (e.key.toLowerCase() === 'x') input.run = false;
+});
 
-/* --------------------------------------------
-   LOAD GRAPHICS
--------------------------------------------- */
-imgPlayer.src = "chirk.png";
-imgEnemy.src  = "cheese.png";
-imgBoss.src   = "supercheese.png";
-imgGround.src = "g.png";
-imgFlag.src   = "flag.png";
-imgBG.src     = "bg.png";
-imgBall.src   = "BALL.png";
-
-imgBall.onload = () => imagesLoaded = true;
-
-/* --------------------------------------------
-   MUSIC
--------------------------------------------- */
-let bgMusic, bossMusic, cutsceneMusic;
-function initMusic() {
-    bgMusic = new Audio("bgm.mp3");
-    bgMusic.loop = true;
-
-    bossMusic = new Audio("boss.mp3");
-    bossMusic.loop = true;
-
-    cutsceneMusic = new Audio("cut.mp3");
-    cutsceneMusic.loop = false;
-}
-
-/* --------------------------------------------
-   LEVEL DATA
--------------------------------------------- */
+// ---------- Level data (platforms, enemies, flags) ----------
 const LEVEL_DATA = [
-    {
-        // LEVEL 1
-        platforms: [
-            {x:0, y:420, w:2000, h:60},
-            {x:300, y:340, w:240, h:40},
-            {x:700, y:300, w:240, h:40},
-        ],
-        enemies: [
-            {x:350, y:300},
-            {x:720, y:260},
-        ],
-        flags: [
-            {x:1800, y:360, w:40, h:120}
-        ]
-    },
-    {
-        // LEVEL 2
-        platforms: [
-            {x:0, y:420, w:2200, h:60},
-            {x:350, y:330, w:200, h:40},
-            {x:900, y:260, w:200, h:40},
-            {x:1400, y:320, w:200, h:40}
-        ],
-        enemies: [
-            {x:380, y:290},
-            {x:940, y:220},
-            {x:1450, y:280}
-        ],
-        flags: [
-            {x:2050, y:360, w:40, h:120}
-        ]
-    },
-    {
-        // LEVEL 3 (BOSS)
-        platforms: [
-            {x:0, y:420, w:2400, h:60}
-        ],
-        enemies: [
-            {boss:true, x:1600, y:360, hp:5, cooldown:0, hitCooldown:0, dir:-1, w:70, h:70}
-        ],
-        flags: [] // appears only after boss dies
-    }
+  {
+    platforms: [{ x: 0, y: 360, w: 2000, h: 40 }, { x: 300, y: 300, w: 120, h: 16 }, { x: 600, y: 250, w: 120, h: 16 }],
+    enemies: [{ x: 420, patrol: [380, 520] }],
+    flags: [{ x: 950, w: 32, h: 80 }]
+  },
+  {
+    platforms: [{ x: 0, y: 360, w: 2000, h: 40 }, { x: 180, y: 300, w: 140, h: 16 }, { x: 480, y: 260, w: 140, h: 16 }, { x: 780, y: 220, w: 140, h: 16 }],
+    enemies: [{ x: 300, patrol: [260, 420] }, { x: 650, patrol: [620, 740] }],
+    flags: [{ x: 950, w: 32, h: 80 }]
+  },
+  {
+    platforms: [{ x: 0, y: 360, w: 2000, h: 40 }, { x: 220, y: 300, w: 120, h: 16 }, { x: 480, y: 260, w: 120, h: 16 }, { x: 740, y: 220, w: 120, h: 16 }],
+    enemies: [{ boss: true, x: 900, hp: 5, dir: 1 }], // boss level: boss stands on ground by resetLevel
+    flags: [{ x: 950, w: 32, h: 128 }]
+  }
 ];
 
-/* --------------------------------------------
-   INPUT
--------------------------------------------- */
-let input = { left:false, right:false, jump:false, run:false };
+// ---------- Images ----------
+let imgPlayer = new Image(); imgPlayer.src = "chirk.png";
+let imgEnemy = new Image(); imgEnemy.src = "cheese.png";
+let imgBoss = new Image(); imgBoss.src = "supercheese.png";
+let imgBall = new Image(); imgBall.src = "BALL.png";
+let imgFlag = new Image(); imgFlag.src = "flag.png";
+let imgBG = new Image(); imgBG.src = "bg.png";
+let imgGround = new Image(); imgGround.src = "g.png";
 
-document.addEventListener("keydown", e => {
-    if (e.key === "ArrowLeft" || e.key === "a") input.left = true;
-    if (e.key === "ArrowRight"|| e.key === "d") input.right = true;
-    if (e.key === "ArrowUp"   || e.key === "w" || e.key === " ") input.jump = true;
-    if (e.key === "Shift") input.run = true;
-});
+function worldToScreen(x) { return Math.round(x - camera.x); }
 
-document.addEventListener("keyup", e => {
-    if (e.key === "ArrowLeft" || e.key === "a") input.left = false;
-    if (e.key === "ArrowRight"|| e.key === "d") input.right = false;
-    if (e.key === "ArrowUp"   || e.key === "w" || e.key === " ") input.jump = false;
-    if (e.key === "Shift") input.run = false;
-});
-
-/* --------------------------------------------
-   WORLD → SCREEN X
--------------------------------------------- */
-function worldToScreen(x) {
-    return x - camera.x;
+// ---------- Utilities ----------
+function unlockLevel(lv) {
+  if (lv <= LEVEL_DATA.length && !unlockedLevels.includes(lv)) {
+    unlockedLevels.push(lv);
+    localStorage.setItem("unlockedLevels", JSON.stringify(unlockedLevels));
+  }
 }
 
-/* --------------------------------------------
-   RESET LEVEL
--------------------------------------------- */
-function resetLevel(levelNum){
-    const L = LEVEL_DATA[levelNum-1];
+// Reset a level: spawn enemies and flags and place them properly on platforms
+function resetLevel(levelNum) {
+  const L = LEVEL_DATA[levelNum - 1];
+  enemies = []; fireballs = []; flags = [];
+  player.x = 60; player.y = 200; player.vx = 0; player.vy = 0; player.onGround = false; player.invulnerable = 0;
 
-    player.x = 100;
-    player.y = 100;
-    player.vx = 0;
-    player.vy = 0;
-    player.health = 3;
-    player.invulnerable = 0;
-
-    enemies = [];
-    fireballs = [];
-    flags = [];
-
-    for(const e of L.enemies){
-        if(e.boss){
-            enemies.push({
-                boss:true, x:e.x, y:e.y, w:e.w||70, h:e.h||70,
-                hp:e.hp, dir:e.dir, cooldown:0, hitCooldown:0
-            });
-        } else {
-            enemies.push({
-                boss:false,
-                x:e.x, y:e.y, w:32, h:32,
-                speed:1.0,
-                dir:1,
-                patrolMin:e.x-60,
-                patrolMax:e.x+60
-            });
-        }
-    }
-
-    for(const f of L.flags){
-        flags.push({...f});
-    }
-
-    camera.x = 0;
-
-    if(levelNum === 3){
-        try{ bgMusic.pause(); bossMusic.currentTime=0; bossMusic.play(); }catch{}
+  // Spawn enemies — ensure correct y (on top of the platform) and clamp patrol ranges to platform
+  if (L.enemies) for (const e of L.enemies) {
+    if (e.boss) {
+      // Boss: place on ground platform (first platform assumed ground)
+      const ground = L.platforms[0];
+      const bx = Math.max(ground.x + 16, Math.min(e.x, ground.x + ground.w - 80));
+      enemies.push({ boss: true, x: bx, y: ground.y - 64, w: 64, h: 64, hp: e.hp || 3, cooldown: 120, dir: e.dir || 1, hitCooldown: 0 });
     } else {
-        try{ bossMusic.pause(); bgMusic.currentTime=0; bgMusic.play(); }catch{}
+      // Normal enemy: find platform underneath or default to ground
+      const plat = L.platforms.find(p => e.x >= p.x && e.x <= p.x + p.w) || L.platforms[0];
+      const ex = Math.max(plat.x + 4, Math.min(e.x, plat.x + plat.w - 32));
+      const patrolMin = Math.max(e.patrol[0], plat.x);
+      const patrolMax = Math.min(e.patrol[1], plat.x + plat.w - 32);
+      enemies.push({ boss: false, x: ex, y: plat.y - 32, w: 32, h: 32, patrolMin: patrolMin, patrolMax: patrolMax, dir: 1, speed: 1.2 });
     }
+  }
+
+  // Spawn flags and place them on top of the platform that covers the flag.x
+  if (L.flags) for (const f of L.flags) {
+    const plat = L.platforms.find(p => f.x >= p.x && f.x <= p.x + p.w) || L.platforms[0];
+    flags.push({ x: f.x, y: plat.y - f.h, w: f.w, h: f.h, visible: (levelNum !== 3) }); // hide boss flag until boss dead
+  }
 }
 
-/* --------------------------------------------
-   UNLOCK LEVEL
--------------------------------------------- */
-function unlockLevel(n){
-    if(!unlockedLevels.includes(n)) unlockedLevels.push(n);
+// ---------- Draw level select ----------
+function drawLevelSelect() {
+  ctx.fillStyle = "black"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white"; ctx.font = "24px sans-serif"; ctx.fillText("LEVEL SELECT", 50, 50);
+  unlockedLevels.forEach((lv, i) => ctx.fillText("Level " + lv, 60, 120 + i * 40));
+  ctx.font = "14px sans-serif";
+  ctx.fillText("Press 1/2/3 to start unlocked level. Press Z to return to menu.", 50, canvas.height - 40);
 }
 
-/* --------------------------------------------
-   CUTSCENE
--------------------------------------------- */
-const cutsceneDialogue=[
-    "Chirk enters the realm of the Gaslord...",
-    "A terrible evil bubbles beneath the surface...",
-    "Only one hero can stop the fumes...",
-    "Prepare for the final confrontation!"
-];
-
-/* --------------------------------------------
-   GAME LOOP
--------------------------------------------- */
-function gameLoop(timestamp){
-    const dt = Math.min((timestamp-lastTime)/16.67, 1);
-    lastTime = timestamp;
-
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-
-    if(gameState==="menu") drawMenu();
-    else if(gameState==="levelselect") drawLevelSelect();
-    else if(gameState==="cutscene") runCutscene(dt);
-    else if(gameState==="playing") runLevel(currentLevel);
-    else if(gameState==="win") drawWin();
-
-    requestAnimationFrame(gameLoop);
+// ---------- Music init ----------
+function initMusic() {
+  bgm = new Audio("bgm.mp3"); bgm.loop = true; bgm.volume = 0.5;
+  bossMusic = new Audio("boss.mp3"); bossMusic.loop = true; bossMusic.volume = 0.7;
+  cutsceneMusic = new Audio("cut.mp3"); cutsceneMusic.loop = false; cutsceneMusic.volume = 0.8;
+  // attempt play (may be blocked until interaction)
+  try { bgm.play().catch(() => { }); } catch (e) { }
 }
 
-/* --------------------------------------------
-   MENU
--------------------------------------------- */
-function drawMenu(){
-    ctx.fillStyle="white";
-    ctx.font="32px sans-serif";
-    ctx.fillText("SUPER CHIRK", 280, 160);
-    ctx.font="20px sans-serif";
-    ctx.fillText("Press SPACE to start", 300, 240);
+// ---------- Main runLevel (complete) ----------
+function runLevel(levelNum) {
+  const L = LEVEL_DATA[levelNum - 1];
 
-    document.onkeydown = e =>{
-        if(e.key===" "){
-            gameState="levelselect";
-        }
-    }
-}
+  // Background
+  if (imgBG.complete && imgBG.width > 0) {
+    const tileW = imgBG.width;
+    const startX = -((camera.x % tileW + tileW) % tileW) - tileW;
+    for (let bx = startX; bx < canvas.width; bx += tileW) ctx.drawImage(imgBG, bx, 0);
+  } else {
+    ctx.fillStyle = '#80c0ff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
 
-/* --------------------------------------------
-   LEVEL SELECT
--------------------------------------------- */
-function drawLevelSelect(){
-    ctx.fillStyle="white";
-    ctx.font="28px sans-serif";
-    ctx.fillText("SELECT LEVEL", 300, 80);
-
-    ctx.font="20px sans-serif";
-    ctx.fillText("Press 1 for Level 1", 300, 150);
-    ctx.fillText("Press 2 for Level 2", 300, 190);
-    ctx.fillText("Press 3 for Level 3 (Boss)", 300, 230);
-
-    document.onkeydown = e =>{
-        if(e.key==="1" && unlockedLevels.includes(1)){
-            currentLevel=1; resetLevel(1); gameState="playing";
-        }
-        if(e.key==="2" && unlockedLevels.includes(2)){
-            currentLevel=2; resetLevel(2); gameState="playing";
-        }
-        if(e.key==="3" && unlockedLevels.includes(3)){
-            cutsceneTimer=0;
-            inCutscene=true;
-            try{ cutsceneMusic.currentTime=0; cutsceneMusic.play(); }catch{}
-            gameState="cutscene";
-        }
-    }
-}
-
-/* --------------------------------------------
-   CUTSCENE LOGIC
--------------------------------------------- */
-function runCutscene(dt){
-    ctx.fillStyle="black";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-
-    ctx.fillStyle="white";
-    ctx.font="22px sans-serif";
-
-    const idx = Math.floor((cutsceneTimer/22)*cutsceneDialogue.length);
-    const line = cutsceneDialogue[Math.min(idx, cutsceneDialogue.length-1)];
-
-    ctx.fillText(line, 100, 220);
-
-    cutsceneTimer += dt;
-
-    if(cutsceneTimer >= 22){
-        try{ cutsceneMusic.pause(); }catch{}
-        inCutscene=false;
-        currentLevel=3;
-        resetLevel(3);
-        gameState="playing";
-    }
-}
-
-/* --------------------------------------------
-   WIN SCREEN
--------------------------------------------- */
-function drawWin(){
-    ctx.fillStyle="white";
-    ctx.font="40px sans-serif";
-    ctx.fillText("YOU DEFEATED THE GASLORD!", 120, 200);
-
-    ctx.font="20px sans-serif";
-    ctx.fillText("Press SPACE to return to menu", 220, 260);
-
-    document.onkeydown = e =>{
-        if(e.key===" "){
-            gameState="menu";
-        }
-    }
-}
-
-/* --------------------------------------------
-   MAIN LEVEL LOGIC
--------------------------------------------- */
-function runLevel(levelNum){
-    const L=LEVEL_DATA[levelNum-1];
-
-    /* BACKGROUND */
-    if(imgBG.complete){
-        const tileW = imgBG.width;
-        let startX = -((camera.x % tileW) + tileW);
-        for(let x=startX; x<canvas.width; x+=tileW){
-            ctx.drawImage(imgBG, x, 0);
-        }
-    } else {
-        ctx.fillStyle="#88c0ff";
-        ctx.fillRect(0,0,canvas.width,canvas.height);
-    }
-
-    /* PLAYER MOVEMENT */
-    const accel = input.run ? 0.6 : 0.35;
-
-    if(input.left)  player.vx -= accel;
-    if(input.right) player.vx += accel;
-
-    const maxSpd = input.run ? 6 : 3.5;
-    player.vx = Math.max(-maxSpd, Math.min(maxSpd, player.vx));
-
-    if(input.jump && player.onGround){
-        player.vy = -16; // HIGHER JUMP (A)
-        player.onGround = false;
-        if(input.right) player.vx += 2.5;
-        else if(input.left) player.vx -= 2.5;
-    }
-
-    player.vx *= 0.88;
-    player.vy += gravity;
-    if(player.vy > 18) player.vy = 18;
-
-    player.x += player.vx;
-    player.y += player.vy;
-
-    /* PLATFORM COLLISION */
+  // Player movement physics
+  const accel = input.run ? RUN_ACCEL : WALK_ACCEL; // but ensure constants defined — use local fallback
+  // our constants are WALK_ACCEL and RUN_ACCEL defined above
+  const actualAccel = input.run ? RUN_ACCEL : WALK_ACCEL;
+  if (input.left) player.vx -= actualAccel;
+  if (input.right) player.vx += actualAccel;
+  const maxSpd = input.run ? MAX_RUN : MAX_WALK;
+  player.vx = Math.max(-maxSpd, Math.min(maxSpd, player.vx));
+  // Jump (higher jump requested)
+  if (input.jump && player.onGround) {
+    player.vy = JUMP_VY; // -16 per user's choice A
     player.onGround = false;
-    for(const p of L.platforms){
-        if(player.x+player.w>p.x && player.x<p.x+p.w &&
-           player.y+player.h>p.y && player.y<p.y+p.h)
-        {
-            const px = player.x - player.vx;
-            const py = player.y - player.vy;
+    if (input.right) player.vx += JUMP_HOR_BOOST;
+    else if (input.left) player.vx -= JUMP_HOR_BOOST;
+  }
+  // friction and gravity
+  player.vx *= FRICTION;
+  player.vy += GRAVITY;
+  if (player.vy > MAX_FALL) player.vy = MAX_FALL;
+  player.x += player.vx;
+  player.y += player.vy;
 
-            if(py + player.h <= p.y){
-                player.y = p.y - player.h;
-                player.vy = 0;
-                player.onGround = true;
-            }
-            else if(py >= p.y+p.h){
-                player.y = p.y+p.h;
-                player.vy = 0;
-            }
-            else {
-                if(px + player.w <= p.x){
-                    player.x = p.x - player.w;
-                    player.vx = 0;
-                }
-                else if(px >= p.x+p.w){
-                    player.x = p.x+p.w;
-                    player.vx = 0;
-                }
-            }
-        }
+  // Draw and collide with platforms (AABB with previous-position checks)
+  player.onGround = false;
+  for (const p of L.platforms) {
+    // Draw ground tile (repeat)
+    if (imgGround.complete && imgGround.width > 0) {
+      for (let gx = p.x; gx < p.x + p.w; gx += imgGround.width) {
+        ctx.drawImage(imgGround, worldToScreen(gx), p.y, imgGround.width, p.h);
+      }
+      // draw leftover piece if any (avoid stretching)
+      const remainder = p.w % imgGround.width;
+      if (remainder > 0) {
+        ctx.drawImage(imgGround, 0, 0, remainder, imgGround.height, worldToScreen(p.x + Math.floor(p.w / imgGround.width) * imgGround.width), p.y, remainder, p.h);
+      }
+    } else {
+      ctx.fillStyle = '#6b4'; ctx.fillRect(worldToScreen(p.x), p.y, p.w, p.h);
     }
 
-    /* CAMERA */
-    camera.x = player.x - canvas.width/2 + player.w/2;
-    if(camera.x < 0) camera.x = 0;
+    // Collision
+    if (player.x + player.w > p.x && player.x < p.x + p.w && player.y + player.h > p.y && player.y < p.y + p.h) {
+      const prevX = player.x - player.vx, prevY = player.y - player.vy;
+      if (prevY + player.h <= p.y) {
+        // landed on top
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      } else if (prevY >= p.y + p.h) {
+        // hit bottom
+        player.y = p.y + p.h;
+        player.vy = 0;
+      } else {
+        // side collision
+        if (prevX + player.w <= p.x) { player.x = p.x - player.w; player.vx = 0; }
+        else if (prevX >= p.x + p.w) { player.x = p.x + p.w; player.vx = 0; }
+      }
+    }
+  }
 
-    /* DRAW PLATFORMS */
-    for(const p of L.platforms){
-        if(imgGround.complete){
-            for(let x=p.x; x<p.x+p.w; x+=imgGround.width){
-                ctx.drawImage(imgGround, worldToScreen(x), p.y, imgGround.width, p.h);
-            }
+  // Camera (horizontal only)
+  camera.x = player.x - canvas.width / 2 + player.w / 2;
+  if (camera.x < 0) camera.x = 0;
+
+  // Draw player
+  if (imgPlayer.complete) ctx.drawImage(imgPlayer, worldToScreen(player.x), player.y, player.w, player.h);
+  else { ctx.fillStyle = 'cyan'; ctx.fillRect(worldToScreen(player.x), player.y, player.w, player.h); }
+
+  // ---------- Enemies & Boss ----------
+  // Update enemies: patrol, boss movement, shooting
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (e.boss) {
+      // Boss patrol along ground platform (we used ground as first platform when placing)
+      const ground = L.platforms[0];
+      e.x += 1.4 * e.dir;
+      // clamp boss within ground bounds (keep a margin)
+      if (e.x < ground.x + 16) { e.dir = 1; e.x = ground.x + 16; }
+      if (e.x + e.w > ground.x + ground.w - 16) { e.dir = -1; e.x = ground.x + ground.w - 16 - e.w; }
+
+      // Shoot toward player at cooldown
+      if (e.cooldown <= 0) {
+        const dx = (player.x + player.w / 2) - (e.x + e.w / 2);
+        const dy = (player.y + player.h / 2) - (e.y + e.h / 2);
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const speed = 5.5; // tuned speed
+        fireballs.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, vx: dx / dist * speed, vy: dy / dist * speed, life: 240 });
+        e.cooldown = 60; // fire rate
+      }
+      e.cooldown = Math.max(0, e.cooldown - 1);
+
+      // Draw boss
+      if (imgBoss.complete) ctx.drawImage(imgBoss, worldToScreen(e.x), e.y, e.w, e.h);
+      else { ctx.fillStyle = 'purple'; ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h); }
+
+      // Draw boss HP above boss
+      ctx.fillStyle = 'black'; ctx.font = '16px sans-serif'; ctx.fillText('Boss HP: ' + e.hp, worldToScreen(e.x), e.y - 8);
+
+    } else {
+      // Normal enemy AI — patrol and clamp to platform patrol range
+      e.x += e.speed * e.dir;
+      if (e.x < e.patrolMin) { e.dir = 1; e.x = e.patrolMin; }
+      if (e.x > e.patrolMax) { e.dir = -1; e.x = e.patrolMax; }
+
+      // Draw enemy
+      if (imgEnemy.complete) ctx.drawImage(imgEnemy, worldToScreen(e.x), e.y, e.w, e.h);
+      else { ctx.fillStyle = 'red'; ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h); }
+    }
+  }
+
+  // ---------- Fireballs ----------
+  for (let i = fireballs.length - 1; i >= 0; i--) {
+    const b = fireballs[i];
+    b.x += b.vx; b.y += b.vy; b.life--;
+    if (imgBall.complete) ctx.drawImage(imgBall, worldToScreen(b.x), b.y, 16, 16);
+    else { ctx.fillStyle = 'orange'; ctx.fillRect(worldToScreen(b.x), b.y, 16, 16); }
+
+    // Collision with player
+    if (player.invulnerable <= 0 && player.x < b.x + 16 && player.x + player.w > b.x && player.y < b.y + 16 && player.y + player.h > b.y) {
+      player.health -= 1;
+      player.invulnerable = 90;
+      player.x = Math.max(10, player.x - 60);
+      try { new Audio('ow.mp3').play(); } catch (e) { }
+      fireballs.splice(i, 1);
+      if (player.health <= 0) {
+        player.lives -= 1;
+        if (player.lives <= 0) {
+          // Game over -> back to level select
+          try { bossMusic && bossMusic.pause(); } catch (e) { }
+          gameState = 'levelselect';
+          player.lives = 3; player.health = 3;
         } else {
-            ctx.fillStyle="#6b4";
-            ctx.fillRect(worldToScreen(p.x), p.y, p.w, p.h);
+          resetLevel(levelNum);
         }
+      }
+      continue;
     }
 
-    /* DRAW PLAYER */
-    if(imgPlayer.complete)
-        ctx.drawImage(imgPlayer, worldToScreen(player.x), player.y, player.w, player.h);
-    else
-        ctx.fillStyle="cyan", ctx.fillRect(worldToScreen(player.x), player.y, player.w, player.h);
+    if (b.life <= 0) fireballs.splice(i, 1);
+  }
 
-    /* ENEMIES */
-    for(let i=enemies.length-1;i>=0;i--){
-        const e = enemies[i];
-
-        if(e.boss){
-            // --- BOSS LOGIC ---
-            e.x += e.dir * 1.4;
-            const ground = L.platforms[0];
-            if(e.x < 200){ e.dir=1; e.x=200; }
-            if(e.x > ground.w - 200){ e.dir=-1; e.x=ground.w-200; }
-
-            // Fireballs
-            if(e.cooldown <= 0){
-                const dx = (player.x+player.w/2) - (e.x+e.w/2);
-                const dy = (player.y+player.h/2) - (e.y+e.h/2);
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                const spd = 5;
-                fireballs.push({
-                    x:e.x+e.w/2,
-                    y:e.y+e.h/2,
-                    vx:dx/dist*spd,
-                    vy:dy/dist*spd,
-                    life:200
-                });
-                e.cooldown = 50;
-            }
-            e.cooldown--;
-
-            // Draw boss
-            if(imgBoss.complete)
-                ctx.drawImage(imgBoss, worldToScreen(e.x), e.y, e.w, e.h);
-            else
-                ctx.fillStyle="purple", ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h);
-
-            // Boss HP text
-            ctx.fillStyle="black";
-            ctx.font="16px sans-serif";
-            ctx.fillText("Boss HP: " + e.hp, worldToScreen(e.x), e.y - 10);
-
-            // --- BOSS STOMP FIX (WIN TRIGGER) ---
-            if(
-                player.vy > 0 &&
-                player.y + player.h < e.y + 20 &&
-                player.x + player.w > e.x &&
-                player.x < e.x + e.w &&
-                e.hitCooldown <= 0
-            ){
-                e.hp--;
-                e.hitCooldown = 20;
-                player.vy = -10;
-
-                try{ new Audio("owe.mp3").play(); }catch{}
-
-                if(e.hp <= 0){
-                    try{ bossMusic.pause(); bossMusic.currentTime=0; }catch{}
-                    enemies = [];
-                    fireballs = [];
-                    player.vx = 0;
-                    player.vy = 0;
-                    gameState = "win";
-                    return;
-                }
-            }
-
-            if(e.hitCooldown > 0) e.hitCooldown--;
-
-        } else {
-            // --- NORMAL ENEMY ---
-            e.x += e.speed * e.dir;
-
-            if(e.x < e.patrolMin){ e.dir = 1; e.x = e.patrolMin; }
-            if(e.x > e.patrolMax){ e.dir = -1; e.x = e.patrolMax; }
-
-            if(imgEnemy.complete)
-                ctx.drawImage(imgEnemy, worldToScreen(e.x), e.y, e.w, e.h);
-            else
-                ctx.fillStyle="red", ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h);
+  // ---------- Player vs Enemies collisions & stomps ----------
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (!e.boss) {
+      // stomp detection
+      if (player.vy > 0 && player.y + player.h <= e.y + 12 && player.x + player.w > e.x && player.x < e.x + e.w) {
+        // kill enemy
+        try { new Audio('owe.mp3').play(); } catch (err) { }
+        enemies.splice(i, 1);
+        player.vy = -8;
+        continue;
+      }
+      // side collision damage
+      if (player.invulnerable <= 0 && player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
+        player.health -= 1;
+        player.invulnerable = 90;
+        player.x = Math.max(10, player.x - 40);
+        try { new Audio('ow.mp3').play(); } catch (err) { }
+        if (player.health <= 0) {
+          player.lives -= 1;
+          if (player.lives <= 0) {
+            try { bossMusic && bossMusic.pause(); } catch (err) { }
+            gameState = 'levelselect';
+            player.lives = 3; player.health = 3;
+          } else resetLevel(levelNum);
         }
+      }
+    } else {
+      // boss interactions
+     // --- BOSS STOMP COLLISION (FIXED) ---
+if (
+    player.vy > 0 &&
+    player.y + player.h < e.y + 16 &&
+    player.x + player.w > e.x &&
+    player.x < e.x + e.w &&
+    e.hitCooldown <= 0
+) {
+    // damage boss
+    e.hp--;
+    e.hitCooldown = 20;
+    player.vy = -10; // small bounce
+    try { new Audio("owe.mp3").play(); } catch {}
+
+    // ---- WIN CONDITION FIX ----
+    if (e.hp <= 0) {
+        try {
+            bossMusic.pause();
+            bossMusic.currentTime = 0;
+        } catch {}
+
+        // switch to win screen
+        gameState = "win";
+
+        // prevent physics from continuing
+        player.vx = 0;
+        player.vy = 0;
+
+        // clear enemies and projectiles
+        enemies = [];
+        fireballs = [];
+
+        return; // ← CRITICAL! stops the rest of runLevel()
     }
-
-    /* FIREBALLS */
-    for(let i=fireballs.length-1;i>=0;i--){
-        const b = fireballs[i];
-        b.x += b.vx;
-        b.y += b.vy;
-        b.life--;
-
-        if(imgBall.complete)
-            ctx.drawImage(imgBall, worldToScreen(b.x), b.y, 16, 16);
-        else
-            ctx.fillStyle="orange", ctx.fillRect(worldToScreen(b.x), b.y, 16, 16);
-
-        // Player hit
-        if(
-            player.invulnerable<=0 &&
-            player.x < b.x+16 &&
-            player.x+player.w > b.x &&
-            player.y < b.y+16 &&
-            player.y+player.h > b.y
-        ){
-            player.health--;
-            player.invulnerable = 90;
-            player.x = Math.max(10, player.x - 60);
-
-            try{ new Audio("ow.mp3").play(); }catch{}
-
-            fireballs.splice(i,1);
-
-            if(player.health <= 0){
-                player.lives--;
-                if(player.lives <= 0){
-                    gameState="levelselect";
-                    player.lives = 3;
-                    player.health = 3;
-                    try{ bossMusic.pause(); }catch{}
-                } else resetLevel(levelNum);
-            }
-        }
-
-        if(b.life <= 0) fireballs.splice(i,1);
-    }
-
-    /* NORMAL ENEMY COLLISIONS */
-    for(let i=enemies.length-1;i>=0;i--){
-        const e = enemies[i];
-        if(e.boss) continue;
-
-        // stomp
-        if(
-            player.vy>0 &&
-            player.y+player.h < e.y+15 &&
-            player.x+player.w > e.x &&
-            player.x < e.x+e.w
-        ){
-            enemies.splice(i,1);
-            player.vy = -8;
-            try{ new Audio("owe.mp3").play(); }catch{}
-            continue;
-        }
-
-        // side hit
-        if(
-            player.invulnerable<=0 &&
-            player.x < e.x+e.w && player.x+player.w > e.x &&
-            player.y < e.y+e.h && player.y+player.h > e.y
-        ){
-            player.health--;
-            player.invulnerable = 90;
-            player.x = Math.max(10, player.x - 40);
-            try{ new Audio("ow.mp3").play(); }catch{}
-
-            if(player.health <= 0){
-                player.lives--;
-                if(player.lives <= 0){
-                    gameState="levelselect";
-                    player.lives=3;
-                    player.health=3;
-                    try{ bossMusic.pause(); }catch{}
-                } else resetLevel(levelNum);
-            }
-        }
-    }
-
-    /* FLAGS — only active when all non-boss enemies are dead */
-    const allEnemiesDead = enemies.filter(e=>!e.boss).length === 0;
-
-    for(const f of flags){
-        if(imgFlag.complete)
-            ctx.drawImage(imgFlag, worldToScreen(f.x), f.y, f.w, f.h);
-        else
-            ctx.fillStyle="yellow", ctx.fillRect(worldToScreen(f.x), f.y, f.w, f.h);
-
-        if(allEnemiesDead &&
-           player.x + player.w > f.x &&
-           player.x < f.x + f.w &&
-           player.y + player.h > f.y)
-        {
-            unlockLevel(levelNum+1);
-            currentLevel = levelNum + 1;
-            if(levelNum+1 <= LEVEL_DATA.length){
-                resetLevel(levelNum+1);
-            }
-            gameState="levelselect";
-        }
-    }
-
-    /* INVULNERABILITY TIMER */
-    if(player.invulnerable > 0) player.invulnerable--;
-
-    /* HUD */
-    ctx.fillStyle="black";
-    ctx.font="16px sans-serif";
-    ctx.fillText("Level " + levelNum, 10, 20);
-    ctx.fillText("Health: " + player.health + " Lives: " + player.lives, 10, 40);
 }
 
-/* --------------------------------------------
-   GLOBAL KEY ACTIONS
--------------------------------------------- */
-function onGlobalKey(e){
-    if(gameState==="playing"){
-        if(e.key.toLowerCase()==="z"){
-            gameState="menu";
-            return;
-        }
-    }
-}
-window.addEventListener("keydown", onGlobalKey);
+      }
+      if (e.hitCooldown > 0) e.hitCooldown--;
 
-/* --------------------------------------------
-   INIT
--------------------------------------------- */
+      // side collision with boss damages the player
+      if (player.invulnerable <= 0 && player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
+        player.health -= 1;
+        player.invulnerable = 90;
+        player.x = Math.max(10, player.x - 60);
+        try { new Audio('ow.mp3').play(); } catch (err) { }
+        if (player.health <= 0) {
+          player.lives -= 1;
+          if (player.lives <= 0) {
+            try { bossMusic && bossMusic.pause(); } catch (err) { }
+            gameState = 'levelselect';
+            player.lives = 3; player.health = 3;
+          } else resetLevel(levelNum);
+        }
+      }
+    }
+  }
+
+  // ---------- Flags: show only after enemies dead (in boss level) ----------
+  // Determine if any non-boss enemies are alive OR boss is alive
+  const bossAlive = enemies.some(e => e.boss && e.hp > 0);
+  const normalEnemiesAlive = enemies.some(e => !e.boss);
+  for (const f of flags) {
+    // For boss level we hid flags on reset; reveal only when boss dead and no normals
+    if (bossAlive || normalEnemiesAlive) {
+      // If flag was visible earlier, keep it hidden until cleared condition
+      f.visible = false;
+    } else {
+      // If no enemies remain, ensure flag visible
+      f.visible = true;
+    }
+
+    if (!f.visible) continue;
+    if (imgFlag.complete) ctx.drawImage(imgFlag, worldToScreen(f.x), f.y, f.w, f.h);
+    else ctx.fillStyle = 'yellow', ctx.fillRect(worldToScreen(f.x), f.y, f.w, f.h);
+
+    // Player touches flag
+    if (player.x + player.w > f.x && player.x < f.x + f.w && player.y + player.h > f.y) {
+      // Unlock next level only if exists
+      if (levelNum + 1 <= LEVEL_DATA.length) unlockLevel(levelNum + 1);
+      // Reset next level (or just go to levelselect)
+      if (levelNum + 1 <= LEVEL_DATA.length) resetLevel(levelNum + 1);
+      gameState = 'levelselect';
+    }
+  }
+
+  // invulnerability timer
+  if (player.invulnerable > 0) player.invulnerable--;
+
+  // HUD (black text)
+  ctx.fillStyle = 'black';
+  ctx.font = '16px sans-serif';
+  ctx.fillText('Level ' + levelNum, 10, 20);
+  ctx.fillText('Health: ' + player.health + '  Lives: ' + player.lives, 10, 40);
+}
+
+// ---------- Global key handling (menu/pause/level select) ----------
+function onGlobalKey(e) {
+  // Pause toggle
+  if (e.key.toLowerCase() === 'p' && gameState === 'playing') {
+    paused = !paused;
+    if (paused) { try { bgm && bgm.pause(); bossMusic && bossMusic.pause(); } catch (err) { } }
+    else { try { if (currentLevel === 3) bossMusic && bossMusic.play(); else bgm && bgm.play(); } catch (err) { } }
+  }
+
+  // Pause -> menu
+  if (paused && e.key.toLowerCase() === 'm') {
+    paused = false;
+    try { bgm && bgm.play(); } catch (err) { }
+    gameState = 'menu';
+  }
+
+  // Menu -> levelselect
+  if (gameState === 'menu' && e.key.toLowerCase() === 'z') {
+    gameState = 'levelselect';
+    return;
+  }
+
+  // Level selection keys
+  if (gameState === 'levelselect') {
+    if (e.key === '1' && unlockedLevels.includes(1)) {
+      currentLevel = 1; resetLevel(1); try { bgm.currentTime = 0; bgm && bgm.play(); } catch (err) { } gameState = 'playing'; return;
+    }
+    if (e.key === '2' && unlockedLevels.includes(2)) {
+      currentLevel = 2; resetLevel(2); try { bgm.currentTime = 0; bgm && bgm.play(); } catch (err) { } gameState = 'playing'; return;
+    }
+    if (e.key === '3' && unlockedLevels.includes(3)) {
+      // Trigger cutscene before level 3
+      inCutscene = true;
+      cutsceneTimer = 0;
+      try { bgm && bgm.pause(); bossMusic && bossMusic.pause(); } catch (err) { }
+      gameState = 'cutscene';
+      return;
+    }
+    // Allow returning to menu
+    if (e.key.toLowerCase() === 'z') {
+      gameState = 'menu';
+      return;
+    }
+  }
+}
+window.addEventListener('keydown', onGlobalKey);
+
+// ---------- Main game loop ----------
+let lastTime = performance.now();
+function gameLoop(now) {
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  game.time += dt;
+
+  // clear
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (gameState === 'menu') {
+    ctx.fillStyle = 'black'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '28px sans-serif';
+    ctx.fillText('SUPER CHIRK', 50, 50);
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Press Z to Start (level select)', 50, 100);
+  } else if (gameState === 'levelselect') {
+    drawLevelSelect();
+  } else if (gameState === 'cutscene') {
+    ctx.fillStyle = 'black'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white'; ctx.font = '24px sans-serif';
+    if (cutsceneTimer === 0) { try { cutsceneMusic.currentTime = 0; cutsceneMusic.play().catch(() => { }); } catch (err) { } }
+    let lineIndex = Math.floor((cutsceneTimer / 22) * cutsceneDialogue.length);
+    if (lineIndex >= cutsceneDialogue.length) lineIndex = cutsceneDialogue.length - 1;
+    ctx.fillText(cutsceneDialogue[lineIndex], 120, 150);
+    cutsceneTimer += dt;
+    if (cutsceneTimer >= 22) {
+      try { cutsceneMusic.pause(); } catch (err) { }
+      inCutscene = false;
+      currentLevel = 3;
+      try { bossMusic.currentTime = 0; bossMusic.play().catch(() => { }); } catch (err) { }
+      resetLevel(3);
+      gameState = 'playing';
+    }
+  } else if (gameState === 'playing') {
+    if (!paused) runLevel(currentLevel);
+    else {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'white'; ctx.font = '32px sans-serif'; ctx.fillText('PAUSED', 120, 120);
+      ctx.font = '18px sans-serif'; ctx.fillText('Press P to Resume', 110, 170); ctx.fillText('Press M for Menu', 110, 200);
+    }
+  } else if (gameState === 'win') {
+    ctx.fillStyle = 'black'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white'; ctx.font = '28px sans-serif'; ctx.fillText('YOU WIN!', 50, 50);
+    ctx.font = '16px sans-serif'; ctx.fillText('Game permanently locked.', 50, 100);
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+// ---------- Init ----------
 window.onload = () => {
-    canvas = document.getElementById("game");
-    ctx = canvas.getContext("2d");
-    initMusic();
-    requestAnimationFrame(gameLoop);
+  canvas = document.getElementById('game');
+  ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  initMusic();
+  resetLevel(1);
+  requestAnimationFrame(gameLoop);
 };
 </script>
 </body>
 </html>
 
+ 
 
