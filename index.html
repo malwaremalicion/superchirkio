@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Super Chirk — Mini Platformer</title>
+<title>Super Chirk — Mini Platformer (Fixed)</title>
 <style>
   html,body{height:100%;margin:0;background:#000;display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto}
   canvas{background:#000;image-rendering:pixelated}
@@ -16,9 +16,7 @@
 <div id="ui"></div>
 
 <script>
-// === Super Chirk — Complete single-file version ===
-// All original features restored + fixes applied
-// Player jump set to medium-high (vy = -16)
+// === Super Chirk — Complete single-file version (Fixed) ===
 
 // ---------- Globals ----------
 let canvas = null, ctx = null;
@@ -131,7 +129,8 @@ function resetLevel(levelNum) {
   // Spawn flags and place them on top of the platform that covers the flag.x
   if (L.flags) for (const f of L.flags) {
     const plat = L.platforms.find(p => f.x >= p.x && f.x <= p.x + p.w) || L.platforms[0];
-    flags.push({ x: f.x, y: plat.y - f.h, w: f.w, h: f.h, visible: (levelNum !== 3) }); // hide boss flag until boss dead
+    // hide boss flag until boss dead (visible true for non-boss levels)
+    flags.push({ x: f.x, y: plat.y - f.h, w: f.w, h: f.h, visible: (levelNum !== 3) });
   }
 }
 
@@ -153,7 +152,7 @@ function initMusic() {
   try { bgm.play().catch(() => { }); } catch (e) { }
 }
 
-// ---------- Main runLevel (complete) ----------
+// ---------- Main runLevel (complete, fixed) ----------
 function runLevel(levelNum) {
   const L = LEVEL_DATA[levelNum - 1];
 
@@ -167,13 +166,12 @@ function runLevel(levelNum) {
   }
 
   // Player movement physics
-  const accel = input.run ? RUN_ACCEL : WALK_ACCEL; // but ensure constants defined — use local fallback
-  // our constants are WALK_ACCEL and RUN_ACCEL defined above
   const actualAccel = input.run ? RUN_ACCEL : WALK_ACCEL;
   if (input.left) player.vx -= actualAccel;
   if (input.right) player.vx += actualAccel;
   const maxSpd = input.run ? MAX_RUN : MAX_WALK;
   player.vx = Math.max(-maxSpd, Math.min(maxSpd, player.vx));
+
   // Jump (higher jump requested)
   if (input.jump && player.onGround) {
     player.vy = JUMP_VY; // -16 per user's choice A
@@ -234,7 +232,6 @@ function runLevel(levelNum) {
   else { ctx.fillStyle = 'cyan'; ctx.fillRect(worldToScreen(player.x), player.y, player.w, player.h); }
 
   // ---------- Enemies & Boss ----------
-  // Update enemies: patrol, boss movement, shooting
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
     if (e.boss) {
@@ -334,71 +331,43 @@ function runLevel(levelNum) {
         }
       }
     } else {
-      // boss interactions
-     // --- BOSS STOMP COLLISION (FIXED) ---
-if (
-    player.vy > 0 &&
-    player.y + player.h <= e.y + 10 &&
-    player.x + player.w > e.x &&
-    player.x < e.x + e.w &&
-    e.hitCooldown <= 0
-) {
-    e.hp--;
-    e.hitCooldown = 20;
-    player.vy = -10;
+      // ---------- BOSS INTERACTIONS (fixed: single damage, no duplicate block) ----------
+      // Stomp boss
+      if (
+        player.vy > 0 &&
+        player.y + player.h <= e.y + 10 &&
+        player.x + player.w > e.x &&
+        player.x < e.x + e.w &&
+        e.hitCooldown <= 0
+      ) {
+        e.hp--;
+        e.hitCooldown = 20;
+        player.vy = -10;
 
-    try { new Audio("owe.mp3").play(); } catch {}
+        try { new Audio("owe.mp3").play(); } catch {}
 
-    if (e.hp <= 0) {
-        try {
+        if (e.hp <= 0) {
+          try {
             bossMusic.pause();
             bossMusic.currentTime = 0;
-        } catch {}
+          } catch {}
 
-        gameState = "win";
+          // switch to win screen
+          gameState = "win";
 
-        player.vx = 0;
-        player.vy = 0;
+          // prevent physics from continuing
+          player.vx = 0;
+          player.vy = 0;
 
-        enemies = [];
-        fireballs = [];
+          // clear enemies and projectiles
+          enemies = [];
+          fireballs = [];
 
-        return;
-    }
-}
- {
-    // damage boss
-    e.hp--;
-    e.hitCooldown = 20;
-    player.vy = -10; // small bounce
-    try { new Audio("owe.mp3").play(); } catch {}
-
-    // ---- WIN CONDITION FIX ----
-    if (e.hp <= 0) {
-        try {
-            bossMusic.pause();
-            bossMusic.currentTime = 0;
-        } catch {}
-
-        // switch to win screen
-        gameState = "win";
-
-        // prevent physics from continuing
-        player.vx = 0;
-        player.vy = 0;
-
-        // clear enemies and projectiles
-        enemies = [];
-        fireballs = [];
-
-        return; // ← CRITICAL! stops the rest of runLevel()
-    }
-}
-
+          return; // stop the rest of runLevel
+        }
       }
-      if (e.hitCooldown > 0) e.hitCooldown--;
 
-      // side collision with boss damages the player
+      // Side collision with boss damages the player
       if (player.invulnerable <= 0 && player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
         player.health -= 1;
         player.invulnerable = 90;
@@ -413,6 +382,8 @@ if (
           } else resetLevel(levelNum);
         }
       }
+
+      if (e.hitCooldown > 0) e.hitCooldown--;
     }
   }
 
@@ -420,6 +391,7 @@ if (
   // Determine if any non-boss enemies are alive OR boss is alive
   const bossAlive = enemies.some(e => e.boss && e.hp > 0);
   const normalEnemiesAlive = enemies.some(e => !e.boss);
+
   for (const f of flags) {
     // For boss level we hid flags on reset; reveal only when boss dead and no normals
     if (bossAlive || normalEnemiesAlive) {
@@ -428,10 +400,12 @@ if (
     } else {
       // If no enemies remain, ensure flag visible
       f.visible = true;
+    }
 
     if (!f.visible) continue;
+
     if (imgFlag.complete) ctx.drawImage(imgFlag, worldToScreen(f.x), f.y, f.w, f.h);
-    else ctx.fillStyle = 'yellow', ctx.fillRect(worldToScreen(f.x), f.y, f.w, f.h);
+    else { ctx.fillStyle = 'yellow'; ctx.fillRect(worldToScreen(f.x), f.y, f.w, f.h); }
 
     // Player touches flag
     if (player.x + player.w > f.x && player.x < f.x + f.w && player.y + player.h > f.y) {
@@ -483,17 +457,14 @@ function onGlobalKey(e) {
     if (e.key === '2' && unlockedLevels.includes(2)) {
       currentLevel = 2; resetLevel(2); try { bgm.currentTime = 0; bgm && bgm.play(); } catch (err) { } gameState = 'playing'; return;
     }
-  if (e.key === '3' && unlockedLevels.includes(3)) {
-  // Trigger cutscene before level 3
-  inCutscene = true;
-  cutsceneTimer = 0;
-
-  try { bgm && bgm.pause(); bossMusic && bossMusic.pause(); } catch (err) {}
-
-  gameState = "cutscene";
-  return;
-}
-
+    if (e.key === '3' && unlockedLevels.includes(3)) {
+      // Trigger cutscene before level 3
+      inCutscene = true;
+      cutsceneTimer = 0;
+      try { bgm && bgm.pause(); bossMusic && bossMusic.pause(); } catch (err) { }
+      gameState = 'cutscene';
+      return;
+    }
     // Allow returning to menu
     if (e.key.toLowerCase() === 'z') {
       gameState = 'menu';
@@ -566,6 +537,7 @@ window.onload = () => {
 </script>
 </body>
 </html>
+
 
  
 
