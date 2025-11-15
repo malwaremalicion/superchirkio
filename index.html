@@ -58,13 +58,13 @@ let imgBall  = new Image();
 /* --------------------------------------------
    LOAD GRAPHICS
 -------------------------------------------- */
-imgPlayer.src = "player.png";
-imgEnemy.src  = "enemy.png";
-imgBoss.src   = "boss.png";
-imgGround.src = "ground.png";
+imgPlayer.src = "chirk.png";
+imgEnemy.src  = "cheese.png";
+imgBoss.src   = "supercheese.png";
+imgGround.src = "g.png";
 imgFlag.src   = "flag.png";
 imgBG.src     = "bg.png";
-imgBall.src   = "fireball.png";
+imgBall.src   = "BALL.png";
 
 imgBall.onload = () => imagesLoaded = true;
 
@@ -73,13 +73,13 @@ imgBall.onload = () => imagesLoaded = true;
 -------------------------------------------- */
 let bgMusic, bossMusic, cutsceneMusic;
 function initMusic() {
-    bgMusic = new Audio("bgmusic.mp3");
+    bgMusic = new Audio("bgm.mp3");
     bgMusic.loop = true;
 
-    bossMusic = new Audio("bossmusic.mp3");
+    bossMusic = new Audio("boss.mp3");
     bossMusic.loop = true;
 
-    cutsceneMusic = new Audio("cutscene.mp3");
+    cutsceneMusic = new Audio("cut.mp3");
     cutsceneMusic.loop = false;
 }
 
