@@ -338,11 +338,35 @@ function runLevel(levelNum) {
      // --- BOSS STOMP COLLISION (FIXED) ---
 if (
     player.vy > 0 &&
-    player.y + player.h < e.y + 16 &&
+    player.y + player.h <= e.y + 10 &&
     player.x + player.w > e.x &&
     player.x < e.x + e.w &&
     e.hitCooldown <= 0
 ) {
+    e.hp--;
+    e.hitCooldown = 20;
+    player.vy = -10;
+
+    try { new Audio("owe.mp3").play(); } catch {}
+
+    if (e.hp <= 0) {
+        try {
+            bossMusic.pause();
+            bossMusic.currentTime = 0;
+        } catch {}
+
+        gameState = "win";
+
+        player.vx = 0;
+        player.vy = 0;
+
+        enemies = [];
+        fireballs = [];
+
+        return;
+    }
+}
+ {
     // damage boss
     e.hp--;
     e.hitCooldown = 20;
