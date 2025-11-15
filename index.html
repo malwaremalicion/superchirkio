@@ -483,14 +483,17 @@ function onGlobalKey(e) {
     if (e.key === '2' && unlockedLevels.includes(2)) {
       currentLevel = 2; resetLevel(2); try { bgm.currentTime = 0; bgm && bgm.play(); } catch (err) { } gameState = 'playing'; return;
     }
-    if (e.key === '3' && unlockedLevels.includes(3)) {
-      // Trigger cutscene before level 3
-      inCutscene = true;
-      cutsceneTimer = 0;
-      try { bgm && bgm.pause(); bossMusic && bossMusic.pause(); } catch (err) { }
-      gameState = 'cutscene';
-      return;
-    }
+  if (e.key === '3' && unlockedLevels.includes(3)) {
+  // Trigger cutscene before level 3
+  inCutscene = true;
+  cutsceneTimer = 0;
+
+  try { bgm && bgm.pause(); bossMusic && bossMusic.pause(); } catch (err) {}
+
+  gameState = "cutscene";
+  return;
+}
+
     // Allow returning to menu
     if (e.key.toLowerCase() === 'z') {
       gameState = 'menu';
