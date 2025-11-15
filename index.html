@@ -244,7 +244,6 @@ function gameLoop(now){
     else if(gameState==="cutscene"){
         ctx.fillStyle="black"; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.fillStyle="white"; ctx.font="24px sans-serif";
         if(cutsceneTimer===0){try{cutsceneMusic.currentTime=0;cutsceneMusic.play().catch(()=>{});}catch{}}
-        let lineIndex=Math.floor((cutscene
         let lineIndex=Math.floor((cutsceneTimer/22)*cutsceneDialogue.length);
         if(lineIndex>=cutsceneDialogue.length) lineIndex=cutsceneDialogue.length-1;
         ctx.fillText(cutsceneDialogue[lineIndex], 120, 150);
