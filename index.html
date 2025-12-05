@@ -3,224 +3,719 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Super Chirk — Mini Platformer (Fixed + Orbit + Laser)</title>
+<title>Super Chirk — Mini Platformer (Rebuilt)</title>
 <style>
-html,body{height:100%;margin:0;background:#000;display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto}
-canvas{background:#000;image-rendering:pixelated}
-#ui{position:fixed;left:12px;top:12px;color:#fff}
-button{padding:8px 12px;margin:6px}
+  html,body{height:100%;margin:0;background:#000;display:flex;align-items:center;justify-content:center;font-family:system-ui,Segoe UI,Roboto}
+  canvas{background:#000;image-rendering:pixelated}
+  #ui{position:fixed;left:12px;top:12px;color:#fff;pointer-events:none}
+  button{padding:8px 12px;margin:6px}
 </style>
 </head>
 <body>
 <canvas id="game" width="960" height="540"></canvas>
 <div id="ui"></div>
+
 <script>
+/*
+  Super Chirk — Rebuilt
+  - Boss HP = 30
+  - Big planes
+  - Orbit attack every 15s: orbit 5s, then fling outward, slow boss after fling
+  - While orbit active, boss direct fire slowed to once per 4s (240 frames)
+  - While orbit NOT active, boss direct fire is fast
+  - Laser attack when boss HP < 20 every 20s
+  - Menu / Z start / level select / cutscene preserved
+*/
+
 // ---------- Globals ----------
-let canvas=null,ctx=null,gameState="menu",currentLevel=1;
-let unlockedLevels=JSON.parse(localStorage.getItem("unlockedLevels")||"[1]");
-let game={time:0},paused=false,FRAME=0;
-let player={x:50,y:240,w:32,h:48,vx:0,vy:0,onGround:false,facing:1,health:3,lives:3,invulnerable:0};
-let enemies=[],fireballs=[],orbiters=[],lasers=[],flags=[];
-let camera={x:0};
-const GRAVITY=0.8,MAX_FALL=18,FRICTION=0.88;
-const WALK_ACCEL=0.35,RUN_ACCEL=0.6,MAX_WALK=3.5,MAX_RUN=6,JUMP_VY=-16,JUMP_HOR_BOOST=2.5;
-const input={left:false,right:false,jump:false,run:false};
-window.addEventListener('keydown',e=>{
-  if(e.key==='ArrowLeft') input.left=true;
-  if(e.key==='ArrowRight') input.right=true;
-  if(e.key.toLowerCase()==='z') input.jump=true;
-  if(e.key.toLowerCase()==='x') input.run=true;
+let canvas, ctx;
+let gameState = "menu"; // menu, levelselect, cutscene, playing, win
+let currentLevel = 1;
+let unlockedLevels = JSON.parse(localStorage.getItem("unlockedLevels") || "[1]");
+let game = { time: 0 };
+let paused = false;
+let FRAME = 0;
+
+// ---------- Player & world ----------
+let player = { x: 50, y: 240, w: 32, h: 48, vx: 0, vy: 0, onGround: false, facing: 1, health: 3, lives: 3, invulnerable: 0 };
+let enemies = [];        // includes boss
+let projectiles = [];    // general fired balls and fling projectiles
+let orbiters = [];       // active orbit rings (visual then convert to fling projectiles)
+let lasers = [];         // active laser beams
+let flags = [];
+let camera = { x: 0, y: 0 };
+
+// physics & constants
+const GRAVITY = 0.8, MAX_FALL = 18;
+const FRICTION = 0.88;
+const WALK_ACCEL = 0.35, RUN_ACCEL = 0.6, MAX_WALK = 3.5, MAX_RUN = 6;
+const JUMP_VY = -16, JUMP_HOR_BOOST = 2.5;
+
+// input
+const input = { left: false, right: false, jump: false, run: false };
+window.addEventListener('keydown', e => {
+  // movement inputs
+  if (e.key === 'ArrowLeft') input.left = true;
+  if (e.key === 'ArrowRight') input.right = true;
+  if (e.key.toLowerCase() === 'z') input.jump = true;
+  if (e.key.toLowerCase() === 'x') input.run = true;
+
+  // global keys: menu/level select handled separately below
 });
-window.addEventListener('keyup',e=>{
-  if(e.key==='ArrowLeft') input.left=false;
-  if(e.key==='ArrowRight') input.right=false;
-  if(e.key.toLowerCase()==='z') input.jump=false;
-  if(e.key.toLowerCase()==='x') input.run=false;
+window.addEventListener('keyup', e => {
+  if (e.key === 'ArrowLeft') input.left = false;
+  if (e.key === 'ArrowRight') input.right = false;
+  if (e.key.toLowerCase() === 'z') input.jump = false;
+  if (e.key.toLowerCase() === 'x') input.run = false;
 });
 
-// ---------- Level data ----------
-const LEVEL_DATA=[
-  {platforms:[{x:0,y:360,w:8000,h:40},{x:800,y:300,w:400,h:16},{x:1600,y:250,w:400,h:16}],
-   enemies:[{x:420,patrol:[380,520]}],
-   flags:[{x:4000,w:32,h:80}]
+// ---------- Level data (planes enlarged) ----------
+const LEVEL_DATA = [
+  {
+    // level 1 - huge plane
+    platforms: [
+      { x: 0, y: 360, w: 12000, h: 40 },
+      { x: 800, y: 300, w: 400, h: 16 },
+      { x: 1600, y: 250, w: 400, h: 16 }
+    ],
+    enemies: [{ x: 420, patrol: [380, 520] }],
+    flags: [{ x: 6000, w: 32, h: 80 }]
   },
-  {platforms:[{x:0,y:360,w:8000,h:40},{x:600,y:300,w:400,h:16},{x:1400,y:260,w:400,h:16},{x:2200,y:220,w:400,h:16}],
-   enemies:[{x:800,patrol:[760,940]},{x:1800,patrol:[1720,1840]}],
-   flags:[{x:4200,w:32,h:80}]
+  {
+    platforms: [
+      { x: 0, y: 360, w: 12000, h: 40 },
+      { x: 600, y: 300, w: 400, h: 16 },
+      { x: 1400, y: 260, w: 400, h: 16 },
+      { x: 2200, y: 220, w: 400, h: 16 }
+    ],
+    enemies: [{ x: 800, patrol: [760, 940] }, { x: 1800, patrol: [1720, 1840] }],
+    flags: [{ x: 6400, w: 32, h: 80 }]
   },
-  {platforms:[{x:0,y:360,w:8000,h:40},{x:900,y:300,w:400,h:16},{x:1900,y:260,w:400,h:16},{x:2800,y:220,w:400,h:16}],
-   enemies:[{boss:true,x:1200,hp:30,dir:1}],
-   flags:[{x:4600,w:32,h:128}]
+  {
+    platforms: [
+      { x: 0, y: 360, w: 12000, h: 40 },
+      { x: 900, y: 300, w: 400, h: 16 },
+      { x: 1900, y: 260, w: 400, h: 16 },
+      { x: 2800, y: 220, w: 400, h: 16 }
+    ],
+    // boss entry: hp=30, placed near center-ish
+    enemies: [{ boss: true, x: 2200, hp: 30, dir: 1 }],
+    flags: [{ x: 6800, w: 32, h: 128 }]
   }
 ];
 
 // ---------- Images ----------
-let imgPlayer=new Image(), imgEnemy=new Image(), imgBoss=new Image(), imgBall=new Image(), imgFlag=new Image(), imgBG=new Image(), imgGround=new Image(), imgBlaster=new Image(), imgLaser=new Image();
-imgPlayer.src="chirk.png"; imgEnemy.src="cheese.png"; imgBoss.src="supercheese.png"; imgBall.src="BALL.png"; imgFlag.src="flag.png";
-imgBG.src="bg.png"; imgGround.src="g.png"; imgBlaster.src="blaster.png"; imgLaser.src="laser.png";
-const allImages=[imgPlayer,imgEnemy,imgBoss,imgBall,imgFlag,imgBG,imgGround,imgBlaster,imgLaser];
-let imagesLoaded=0;
+let imgPlayer = new Image(), imgEnemy = new Image(), imgBoss = new Image(), imgBall = new Image(), imgFlag = new Image(), imgBG = new Image(), imgGround = new Image(), imgBlaster = new Image(), imgLaser = new Image();
+imgPlayer.src = "chirk.png";
+imgEnemy.src = "cheese.png";
+imgBoss.src = "supercheese.png";
+imgBall.src = "BALL.png";
+imgFlag.src = "flag.png";
+imgBG.src = "bg.png";
+imgGround.src = "g.png";
+imgBlaster.src = "blaster.png";
+imgLaser.src = "laser.png";
 
-// Wait for images to load
-allImages.forEach(img=>{
-  img.onload=()=>{imagesLoaded++; if(imagesLoaded===allImages.length){startGame();}};
-  img.onerror=()=>{imagesLoaded++; if(imagesLoaded===allImages.length){startGame();}}; // continue even if missing
+const allImages = [imgPlayer, imgEnemy, imgBoss, imgBall, imgFlag, imgBG, imgGround, imgBlaster, imgLaser];
+let imagesLoaded = 0;
+allImages.forEach(img => {
+  img.onload = () => { imagesLoaded++; if (imagesLoaded === allImages.length) startGame(); };
+  img.onerror = () => { imagesLoaded++; if (imagesLoaded === allImages.length) startGame(); };
 });
 
 // ---------- Helpers ----------
-function worldToScreen(x){return Math.round(x-camera.x);}
-function unlockLevel(lv){if(lv<=LEVEL_DATA.length&&!unlockedLevels.includes(lv)){unlockedLevels.push(lv);localStorage.setItem("unlockedLevels",JSON.stringify(unlockedLevels));}}
+function worldToScreen(x) { return Math.round(x - camera.x); }
+function unlockLevel(lv) {
+  if (lv <= LEVEL_DATA.length && !unlockedLevels.includes(lv)) {
+    unlockedLevels.push(lv);
+    localStorage.setItem("unlockedLevels", JSON.stringify(unlockedLevels));
+  }
+}
 
-// ---------- Reset Level ----------
-function resetLevel(levelNum){
-  const L=LEVEL_DATA[levelNum-1]; enemies=[];fireballs=[];orbiters=[];lasers=[];flags=[];
-  player.x=60;player.y=200;player.vx=0;player.vy=0;player.onGround=false;player.invulnerable=0;
-  if(L.enemies) L.enemies.forEach(e=>{
-    if(e.boss){
-      const ground=L.platforms[0];
-      const bx=Math.max(ground.x+16,Math.min(e.x,ground.x+ground.w-80));
-      enemies.push({boss:true,x:bx,y:ground.y-64,w:64,h:64,hp:e.hp||30,cooldown:0,dir:e.dir||1,hitCooldown:0,directFireCooldownBase:12,slowUntilFrame:0,orbitCooldown:900,nextLaserFrame:FRAME+999999});
+// ---------- Reset / spawn ----------
+function resetLevel(levelNum) {
+  const L = LEVEL_DATA[levelNum - 1];
+  enemies = []; projectiles = []; orbiters = []; lasers = []; flags = [];
+  player.x = 60; player.y = 200; player.vx = 0; player.vy = 0; player.onGround = false; player.invulnerable = 0;
+
+  if (L.enemies) {
+    L.enemies.forEach(e => {
+      if (e.boss) {
+        // Boss initial parameters
+        const ground = L.platforms[0];
+        const bx = Math.max(ground.x + 16, Math.min(e.x, ground.x + ground.w - 80));
+        enemies.push({
+          boss: true,
+          x: bx,
+          y: ground.y - 64,
+          w: 64, h: 64,
+          hp: e.hp || 30,
+          dir: e.dir || 1,
+          hitCooldown: 0,
+          // timing in frames
+          orbitInterval: 900,      // 15s at 60fps
+          orbitDuration: 300,      // orbit lasts 5s (300 frames)
+          orbitTimer: 900,         // will count down to zero then spawn
+          slowAfterFlingFrames: 240, // boss slowed after fling for this many frames
+          slowUntilFrame: 0,       // frame until which boss is slowed
+          directFastCooldown: 10,  // fast fire (frames) while NOT orbiting
+          directSlowDuringOrbit: 240, // when orbit active, direct fire becomes once per 4s
+          cooldown: 0,             // current cooldown counter
+          laserCooldownBase: 20 * 60, // 20 seconds in frames
+          nextLaserFrame: Infinity // set after hp drops <20
+        });
+      } else {
+        // normal enemies
+        const plat = L.platforms.find(p => e.x >= p.x && e.x <= p.x + p.w) || L.platforms[0];
+        const ex = Math.max(plat.x + 4, Math.min(e.x, plat.x + plat.w - 32));
+        const patrolMin = Math.max(e.patrol[0], plat.x);
+        const patrolMax = Math.min(e.patrol[1], plat.x + plat.w - 32);
+        enemies.push({ boss: false, x: ex, y: plat.y - 32, w: 32, h: 32, patrolMin, patrolMax, dir: 1, speed: 1.2 });
+      }
+    });
+  }
+
+  if (L.flags) {
+    L.flags.forEach(f => {
+      const plat = L.platforms.find(p => f.x >= p.x && f.x <= p.x + p.w) || L.platforms[0];
+      flags.push({ x: f.x, y: plat.y - f.h, w: f.w, h: f.h, visible: (levelNum !== 3) });
+    });
+  }
+}
+
+// ---------- Orbit helpers ----------
+function spawnOrbitAroundPlayer(bossRef, count = 18, radius = 96, lifetimeFrames = 300, speed = 0.08) {
+  // mark boss to be slowed during orbit (we'll also set projectile cooldown behavior)
+  bossRef.slowUntilFrame = Math.max(bossRef.slowUntilFrame || 0, FRAME + lifetimeFrames);
+  // add an orbit object; orbiters will be rendered and check collision while life > 0
+  orbiters.push({
+    boss: bossRef,
+    t: 0,
+    count,
+    radius,
+    life: lifetimeFrames,
+    speed,
+    // flag so that when life hits 0 we "fling" the orbiters outwards as projectiles
+    flingSpeed: 6.0
+  });
+}
+
+// ---------- Projectile helpers ----------
+function spawnProjectile(x, y, vx, vy, life = 240, owner = 'boss') {
+  projectiles.push({ x, y, vx, vy, life, owner });
+}
+
+// ---------- Laser helpers ----------
+function spawnLaserFromBoss(bossRef, lifeFrames = 90) {
+  lasers.push({
+    owner: bossRef,
+    life: lifeFrames,
+    maxLife: lifeFrames
+  });
+}
+
+// find distance from point to segment (used for laser collision)
+function pointToSegmentDist(px, py, x1, y1, x2, y2) {
+  const vx = x2 - x1, vy = y2 - y1, wx = px - x1, wy = py - y1;
+  const denom = (vx * vx + vy * vy) || 1;
+  const c = (wx * vx + wy * vy) / denom;
+  const t = Math.max(0, Math.min(1, c));
+  const rx = x1 + vx * t, ry = y1 + vy * t;
+  const dx = px - rx, dy = py - ry;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+// ---------- Main runLevel ----------
+function runLevel(levelNum) {
+  const L = LEVEL_DATA[levelNum - 1];
+
+  // Background drawing (tiled)
+  if (imgBG.complete && imgBG.width > 0) {
+    const tileW = imgBG.width;
+    const startX = -((camera.x % tileW + tileW) % tileW) - tileW;
+    for (let bx = startX; bx < canvas.width; bx += tileW) ctx.drawImage(imgBG, bx, 0);
+  } else {
+    ctx.fillStyle = '#80c0ff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // Player movement & physics
+  const actualAccel = input.run ? RUN_ACCEL : WALK_ACCEL;
+  if (input.left) player.vx -= actualAccel;
+  if (input.right) player.vx += actualAccel;
+  const maxSpd = input.run ? MAX_RUN : MAX_WALK;
+  player.vx = Math.max(-maxSpd, Math.min(maxSpd, player.vx));
+
+  if (input.jump && player.onGround) {
+    player.vy = JUMP_VY;
+    player.onGround = false;
+    if (input.right) player.vx += JUMP_HOR_BOOST;
+    else if (input.left) player.vx -= JUMP_HOR_BOOST;
+  }
+
+  player.vx *= FRICTION;
+  player.vy += GRAVITY;
+  if (player.vy > MAX_FALL) player.vy = MAX_FALL;
+  player.x += player.vx;
+  player.y += player.vy;
+
+  // Platforms draw & collision
+  player.onGround = false;
+  for (const p of L.platforms) {
+    // draw ground tiles if image available
+    if (imgGround.complete && imgGround.width > 0) {
+      for (let gx = p.x; gx < p.x + p.w; gx += imgGround.width) {
+        ctx.drawImage(imgGround, worldToScreen(gx), p.y, imgGround.width, p.h);
+      }
+      // remainder not strictly necessary
     } else {
-      const plat=L.platforms.find(p=>e.x>=p.x&&e.x<=p.x+p.w)||L.platforms[0];
-      const ex=Math.max(plat.x+4,Math.min(e.x,plat.x+plat.w-32));
-      const patrolMin=Math.max(e.patrol[0],plat.x);
-      const patrolMax=Math.min(e.patrol[1],plat.x+plat.w-32);
-      enemies.push({boss:false,x:ex,y:plat.y-32,w:32,h:32,patrolMin,patrolMax,dir:1,speed:1.2});
+      ctx.fillStyle = '#6b4';
+      ctx.fillRect(worldToScreen(p.x), p.y, p.w, p.h);
     }
-  });
-  if(L.flags) L.flags.forEach(f=>{
-    const plat=L.platforms.find(p=>f.x>=p.x&&f.x<=p.x+p.w)||L.platforms[0];
-    flags.push({x:f.x,y:plat.y-f.h,w:f.w,h:f.h,visible:(levelNum!==3)});
-  });
-}
 
-// ---------- Orbit attack ----------
-function spawnOrbitAroundPlayer(bossRef,count=16,radius=80,lifetimeFrames=300,speed=0.08){
-  bossRef.slowUntilFrame=Math.max(bossRef.slowUntilFrame||0,FRAME+lifetimeFrames);
-  orbiters.push({boss:bossRef,t:0,count,radius,life:lifetimeFrames,speed,createdAtFrame:FRAME});
-}
-
-// ---------- Laser ----------
-function spawnLaserFromBoss(bossRef,lifeFrames=90){
-  const blasterX=bossRef.x+bossRef.w/2;
-  const blasterY=bossRef.y+bossRef.h/2;
-  lasers.push({owner:bossRef,sx:blasterX,sy:blasterY,life:lifeFrames,maxLife:lifeFrames,createdAt:FRAME,width:16});
-}
-
-function pointToSegmentDist(px,py,x1,y1,x2,y2){
-  const vx=x2-x1,vy=y2-y1,wx=px-x1,wy=py-y1;
-  const c=(wx*vx+wy*vy)/(vx*vx+vy*vy||1);
-  const t=Math.max(0,Math.min(1,c));
-  const rx=x1+vx*t,ry=y1+vy*t;
-  const dx=px-rx,dy=py-ry;
-  return Math.sqrt(dx*dx+dy*dy);
-}
-
-// ---------- Main Game Loop ----------
-function runLevel(levelNum){
-  const L=LEVEL_DATA[levelNum-1];
-
-  // Background
-  if(imgBG.complete&&imgBG.width>0){
-    const tileW=imgBG.width;
-    const startX=-((camera.x%tileW+tileW)%tileW)-tileW;
-    for(let bx=startX;bx<canvas.width;bx+=tileW) ctx.drawImage(imgBG,bx,0);
-  } else ctx.fillStyle="#80c0ff",ctx.fillRect(0,0,canvas.width,canvas.height);
-
-  // Player movement
-  const actualAccel=input.run?RUN_ACCEL:WALK_ACCEL;
-  if(input.left) player.vx-=actualAccel;
-  if(input.right) player.vx+=actualAccel;
-  const maxSpd=input.run?MAX_RUN:MAX_WALK;
-  player.vx=Math.max(-maxSpd,Math.min(maxSpd,player.vx));
-  if(input.jump&&player.onGround){player.vy=JUMP_VY;player.onGround=false; if(input.right) player.vx+=JUMP_HOR_BOOST; else if(input.left) player.vx-=JUMP_HOR_BOOST;}
-  player.vx*=FRICTION; player.vy+=GRAVITY; if(player.vy>MAX_FALL) player.vy=MAX_FALL;
-  player.x+=player.vx; player.y+=player.vy;
-
-  // Platform collision
-  player.onGround=false;
-  for(const p of L.platforms){
-    if(imgGround.complete&&imgGround.width>0){
-      for(let gx=p.x;gx<p.x+p.w;gx+=imgGround.width) ctx.drawImage(imgGround,worldToScreen(gx),p.y,imgGround.width,p.h);
-    } else ctx.fillStyle="#6b4",ctx.fillRect(worldToScreen(p.x),p.y,p.w,p.h);
-    if(player.x+player.w>p.x&&player.x<p.x+p.w&&player.y+player.h>p.y&&player.y<p.y+p.h){
-      const prevX=player.x-player.vx,prevY=player.y-player.vy;
-      if(prevY+player.h<=p.y){player.y=p.y-player.h;player.vy=0;player.onGround=true;}
-      else if(prevY>=p.y+p.h){player.y=p.y+p.h;player.vy=0;}
-      else{if(prevX+player.w<=p.x){player.x=p.x-player.w;player.vx=0;} else if(prevX>=p.x+p.w){player.x=p.x+p.w;player.vx=0;}}
+    // AABB collision
+    if (player.x + player.w > p.x && player.x < p.x + p.w && player.y + player.h > p.y && player.y < p.y + p.h) {
+      const prevX = player.x - player.vx, prevY = player.y - player.vy;
+      if (prevY + player.h <= p.y) {
+        // landed
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      } else if (prevY >= p.y + p.h) {
+        // hit bottom
+        player.y = p.y + p.h;
+        player.vy = 0;
+      } else {
+        // side collision
+        if (prevX + player.w <= p.x) { player.x = p.x - player.w; player.vx = 0; }
+        else if (prevX >= p.x + p.w) { player.x = p.x + p.w; player.vx = 0; }
+      }
     }
   }
 
-  // Camera
-  camera.x=player.x-canvas.width/2+player.w/2; if(camera.x<0) camera.x=0;
+  // Camera (horizontal)
+  camera.x = player.x - canvas.width / 2 + player.w / 2;
+  if (camera.x < 0) camera.x = 0;
 
   // Draw player
-  if(imgPlayer.complete) ctx.drawImage(imgPlayer,worldToScreen(player.x),player.y,player.w,player.h);
-  else ctx.fillStyle="cyan",ctx.fillRect(worldToScreen(player.x),player.y,player.w,player.h);
+  if (imgPlayer.complete) ctx.drawImage(imgPlayer, worldToScreen(player.x), player.y, player.w, player.h);
+  else { ctx.fillStyle = 'cyan'; ctx.fillRect(worldToScreen(player.x), player.y, player.w, player.h); }
 
-  // ---------- Enemies & Boss ----------
-  for(let i=enemies.length-1;i>=0;i--){
-    const e=enemies[i];
-    if(e.boss){
-      const ground=L.platforms[0];
-      e.x+=0.8*e.dir; if(e.x<ground.x+16){e.dir=1;e.x=ground.x+16;} if(e.x+e.w>ground.x+ground.w-16){e.dir=-1;e.x=ground.x+ground.w-16-e.w;}
-      
-      // Boss orbit every 15 seconds (~900 frames)
-      e.orbitCooldown--; if(e.orbitCooldown<=0){spawnOrbitAroundPlayer(e,20,110,300,0.08); e.orbitCooldown=900;}
+  // ---------- Enemies & Boss logic ----------
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (!e.boss) {
+      // normal enemy patrol
+      e.x += e.speed * e.dir;
+      if (e.x < e.patrolMin) { e.dir = 1; e.x = e.patrolMin; }
+      if (e.x > e.patrolMax) { e.dir = -1; e.x = e.patrolMax; }
+      if (imgEnemy.complete) ctx.drawImage(imgEnemy, worldToScreen(e.x), e.y, e.w, e.h);
+      else { ctx.fillStyle = 'red'; ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h); }
+      continue;
+    }
 
-      // Direct fire (faster when not orbiting)
-      const directBase=(FRAME<(e.slowUntilFrame||0))?240:12;
-      if(!e.cooldown||e.cooldown<=0){
-        const dx=(player.x+player.w/2)-(e.x+e.w/2);
-        const dy=(player.y+player.h/2)-(e.y+e.h/2);
-        const dist=Math.sqrt(dx*dx+dy*dy)||1; const speed=6.2;
-        fireballs.push({x:e.x+e.w/2,y:e.y+e.h/2,vx:dx/dist*speed,vy:dy/dist*speed,life:240,owner:'boss'});
-        e.cooldown=directBase;
+    // Boss behavior:
+    // Slower horizontal movement as requested (use 0.8 multiplier)
+    const ground = L.platforms[0];
+    // if boss is slowed (slowUntilFrame) reduce speed further
+    const isSlowed = FRAME < (e.slowUntilFrame || 0);
+    const bossSpeed = isSlowed ? 0.6 : 1.0; // slower base speed
+    e.x += 0.8 * bossSpeed * e.dir;
+
+    // clamp boss to ground platform
+    if (e.x < ground.x + 16) { e.dir = 1; e.x = ground.x + 16; }
+    if (e.x + e.w > ground.x + ground.w - 16) { e.dir = -1; e.x = ground.x + ground.w - 16 - e.w; }
+
+    // Orbit scheduling
+    e.orbitTimer = (e.orbitTimer || e.orbitInterval);
+    e.orbitTimer--;
+    if (e.orbitTimer <= 0) {
+      // spawn orbit ring
+      spawnOrbitAroundPlayer(e, 20, 110, e.orbitDuration, 0.08);
+      // reset orbitTimer (15s)
+      e.orbitTimer = e.orbitInterval;
+    }
+
+    // Laser scheduling: when hp < 20 schedule lasers every 20s
+    if (e.hp < 20) {
+      if (!isFinite(e.nextLaserFrame) && e.nextLaserFrame === Infinity) {
+        e.nextLaserFrame = FRAME + e.laserCooldownBase;
       }
-      e.cooldown=Math.max(0,(e.cooldown||0)-1);
+      if (FRAME >= (e.nextLaserFrame || Infinity)) {
+        spawnLaserFromBoss(e, 90); // 1.5s beam
+        e.nextLaserFrame = FRAME + e.laserCooldownBase;
+      }
+    }
 
-      // Draw boss
-      if(imgBoss.complete) ctx.drawImage(imgBoss,worldToScreen(e.x),e.y,e.w,e.h); else ctx.fillStyle="purple",ctx.fillRect(worldToScreen(e.x),e.y,e.w,e.h);
-      ctx.fillStyle="black"; ctx.font="16px sans-serif"; ctx.fillText("Boss HP: "+e.hp,worldToScreen(e.x),e.y-8);
+    // Direct firing: if orbit active (boss.slowUntilFrame > FRAME) we want to slow direct shots to once every 4s,
+    // else direct fire is fast (fast cooldown).
+    const inOrbitWindow = FRAME < (e.slowUntilFrame || 0);
+    const directCooldownBase = inOrbitWindow ? e.directSlowDuringOrbit : e.directFastCooldown;
+
+    if (!e.cooldown || e.cooldown <= 0) {
+      // aim at player center
+      const dx = (player.x + player.w / 2) - (e.x + e.w / 2);
+      const dy = (player.y + player.h / 2) - (e.y + e.h / 2);
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const speed = 6.2;
+      spawnProjectile(e.x + e.w / 2, e.y + e.h / 2, dx / dist * speed, dy / dist * speed, 240, 'boss');
+      e.cooldown = directCooldownBase;
+    }
+    e.cooldown = Math.max(0, (e.cooldown || 0) - 1);
+
+    // draw boss
+    if (imgBoss.complete) ctx.drawImage(imgBoss, worldToScreen(e.x), e.y, e.w, e.h);
+    else { ctx.fillStyle = 'purple'; ctx.fillRect(worldToScreen(e.x), e.y, e.w, e.h); }
+
+    // draw HP
+    ctx.fillStyle = 'black'; ctx.font = '16px sans-serif';
+    ctx.fillText('Boss HP: ' + e.hp, worldToScreen(e.x), e.y - 8);
+  }
+
+  // ---------- Orbiters update/draw & fling logic ----------
+  for (let oi = orbiters.length - 1; oi >= 0; oi--) {
+    const orb = orbiters[oi];
+    orb.t += orb.speed;
+    orb.life--;
+
+    // center on player (optionally bias by boss.dir)
+    const bossSide = (orb.boss && orb.boss.dir) ? Math.sin(game.time * 1.2) * 32 * orb.boss.dir : 0;
+    const cx = player.x + player.w / 2 + bossSide;
+    const cy = player.y + player.h / 2;
+
+    // draw orbit points and check collision while orbiting
+    for (let k = 0; k < orb.count; k++) {
+      const ang = orb.t + (k * (Math.PI * 2 / orb.count));
+      const ox = cx + Math.cos(ang) * orb.radius;
+      const oy = cy + Math.sin(ang) * orb.radius;
+
+      if (imgBall.complete) ctx.drawImage(imgBall, worldToScreen(ox - 8), oy - 8, 16, 16);
+      else { ctx.fillStyle = 'orange'; ctx.fillRect(worldToScreen(ox - 8), oy - 8, 16, 16); }
+
+      // collision with player while orbiting
+      if (player.invulnerable <= 0 && player.x < ox + 8 && player.x + player.w > ox - 8 && player.y < oy + 8 && player.y + player.h > oy - 8) {
+        player.health -= 1;
+        player.invulnerable = 90;
+        player.x = Math.max(10, player.x - 60);
+        try { new Audio('ow.mp3').play(); } catch (e) { }
+        if (player.health <= 0) {
+          player.lives -= 1;
+          if (player.lives <= 0) {
+            try { /* pause music */ } catch (e) {}
+            gameState = 'levelselect';
+            player.lives = 3; player.health = 3;
+            return;
+          } else {
+            resetLevel(levelNum);
+            return;
+          }
+        }
+      }
+    }
+
+    // when life expires -> fling orbiters outward and slow boss for a while
+    if (orb.life <= 0) {
+      // create fling projectiles based on final positions
+      const cx2 = player.x + player.w / 2;
+      const cy2 = player.y + player.h / 2;
+      for (let k = 0; k < orb.count; k++) {
+        const ang = orb.t + (k * (Math.PI * 2 / orb.count));
+        const ox = cx2 + Math.cos(ang) * orb.radius;
+        const oy = cy2 + Math.sin(ang) * orb.radius;
+        const vx = Math.cos(ang) * orb.flingSpeed;
+        const vy = Math.sin(ang) * orb.flingSpeed;
+        spawnProjectile(ox, oy, vx, vy, 360, 'fling');
+      }
+      // slow boss for a bit after fling
+      if (orb.boss) {
+        orb.boss.slowUntilFrame = Math.max(orb.boss.slowUntilFrame || 0, FRAME + (orb.boss.slowAfterFlingFrames || 240));
+      }
+      orbiters.splice(oi, 1);
+    }
+  }
+
+  // ---------- Lasers update/draw ----------
+  for (let li = lasers.length - 1; li >= 0; li--) {
+    const Ls = lasers[li];
+    Ls.life--;
+    const boss = Ls.owner;
+    const sx = boss.x + boss.w / 2;
+    const sy = boss.y + boss.h / 2;
+    const tx = player.x + player.w / 2;
+    const ty = player.y + player.h / 2;
+    const vx = tx - sx, vy = ty - sy;
+    const dist = Math.sqrt(vx * vx + vy * vy) || 1;
+    const ang = Math.atan2(vy, vx);
+
+    // blaster sprite at boss
+    if (imgBlaster.complete) ctx.drawImage(imgBlaster, worldToScreen(sx - 16), sy - 16, 32, 32);
+    else { ctx.fillStyle = 'gray'; ctx.fillRect(worldToScreen(sx - 16), sy - 16, 32, 32); }
+
+    // beam draw
+    if (imgLaser.complete && imgLaser.width > 0) {
+      ctx.save();
+      ctx.translate(worldToScreen(sx), sy);
+      ctx.rotate(ang);
+      ctx.drawImage(imgLaser, 0, -12, dist, 24);
+      ctx.restore();
     } else {
-      e.x+=e.speed*e.dir;if(e.x<e.patrolMin){e.dir=1;e.x=e.patrolMin;} if(e.x>e.patrolMax){e.dir=-1;e.x=e.patrolMax;}
-      if(imgEnemy.complete) ctx.drawImage(imgEnemy,worldToScreen(e.x),e.y,e.w,e.h); else ctx.fillStyle="red",ctx.fillRect(worldToScreen(e.x),e.y,e.w,e.h);
+      ctx.save();
+      ctx.translate(worldToScreen(sx), sy);
+      ctx.rotate(ang);
+      ctx.fillStyle = 'rgba(255,40,40,0.9)';
+      ctx.fillRect(0, -8, dist, 16);
+      ctx.restore();
     }
-  }
 
-  // Orbiters
-  for(let oi=orbiters.length-1;oi>=0;oi--){
-    const orb=orbiters[oi]; orb.t+=orb.speed; orb.life--;
-    const cx=player.x+player.w/2,cy=player.y+player.h/2;
-    for(let k=0;k<orb.count;k++){
-      const ang=orb.t+(k*(Math.PI*2/orb.count));
-      const ox=cx+Math.cos(ang)*orb.radius, oy=cy+Math.sin(ang)*orb.radius;
-      if(imgBall.complete) ctx.drawImage(imgBall,worldToScreen(ox-8),oy-8,16,16); else ctx.fillStyle="orange",ctx.fillRect(worldToScreen(ox-8),oy-8,16,16);
-      if(player.invulnerable<=0 && player.x<ox+8 && player.x+player.w>ox-8 && player.y<oy+8 && player.y+player.h>oy-8){
-        player.health--; player.invulnerable=90; player.x=Math.max(10,player.x-60); if(player.health<=0){player.lives--; if(player.lives<=0){gameState="levelselect";player.lives=3;player.health=3;return;} else resetLevel(levelNum);}
+    // collision check (distance from player center to beam segment)
+    const d = pointToSegmentDist(player.x + player.w / 2, player.y + player.h / 2, sx, sy, tx, ty);
+    if (d <= 20 && player.invulnerable <= 0) {
+      player.health -= 1;
+      player.invulnerable = 90;
+      try { new Audio('ow.mp3').play(); } catch (e) {}
+      if (player.health <= 0) {
+        player.lives -= 1;
+        if (player.lives <= 0) {
+          try { } catch (e) {}
+          gameState = 'levelselect';
+          player.lives = 3; player.health = 3;
+          return;
+        } else {
+          resetLevel(levelNum);
+          return;
+        }
       }
     }
-    if(orb.life<=0) orbiters.splice(oi,1);
+
+    if (Ls.life <= 0) lasers.splice(li, 1);
   }
 
-  // invulnerability timer
-  if(player.invulnerable>0) player.invulnerable--;
+  // ---------- Projectiles update/draw ----------
+  for (let pi = projectiles.length - 1; pi >= 0; pi--) {
+    const p = projectiles[pi];
+    p.x += p.vx; p.y += p.vy; p.life--;
+    if (imgBall.complete) ctx.drawImage(imgBall, worldToScreen(p.x - 8), p.y - 8, 16, 16);
+    else { ctx.fillStyle = 'orange'; ctx.fillRect(worldToScreen(p.x - 8), p.y - 8, 16, 16); }
+
+    // collide with player
+    if (player.invulnerable <= 0 && player.x < p.x + 8 && player.x + player.w > p.x - 8 && player.y < p.y + 8 && player.y + player.h > p.y - 8) {
+      player.health -= 1;
+      player.invulnerable = 90;
+      player.x = Math.max(10, player.x - 60);
+      try { new Audio('ow.mp3').play(); } catch (e) {}
+      projectiles.splice(pi, 1);
+      if (player.health <= 0) {
+        player.lives -= 1;
+        if (player.lives <= 0) {
+          gameState = 'levelselect';
+          player.lives = 3; player.health = 3;
+          return;
+        } else {
+          resetLevel(levelNum);
+          return;
+        }
+      }
+      continue;
+    }
+
+    // remove expired
+    if (p.life <= 0) projectiles.splice(pi, 1);
+  }
+
+  // ---------- Player vs enemy collisions & stomps ----------
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (!e.boss) {
+      // stomp
+      if (player.vy > 0 && player.y + player.h <= e.y + 12 && player.x + player.w > e.x && player.x < e.x + e.w) {
+        try { new Audio('owe.mp3').play(); } catch (err) {}
+        enemies.splice(i, 1);
+        player.vy = -8;
+        continue;
+      }
+      // side collision
+      if (player.invulnerable <= 0 && player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
+        player.health -= 1;
+        player.invulnerable = 90;
+        player.x = Math.max(10, player.x - 40);
+        try { new Audio('ow.mp3').play(); } catch (err) {}
+        if (player.health <= 0) {
+          player.lives -= 1;
+          if (player.lives <= 0) {
+            gameState = 'levelselect';
+            player.lives = 3; player.health = 3;
+          } else resetLevel(levelNum);
+        }
+      }
+    } else {
+      // boss -- stomps handled in earlier code (we need separate check here)
+      if (player.vy > 0 && player.y + player.h <= e.y + 10 && player.x + player.w > e.x && player.x < e.x + e.w && e.hitCooldown <= 0) {
+        e.hp--;
+        e.hitCooldown = 20;
+        player.vy = -10;
+        try { new Audio("owe.mp3").play(); } catch (err) {}
+        if (e.hp <= 0) {
+          try { } catch (err) {}
+          gameState = "win";
+          player.vx = 0; player.vy = 0;
+          enemies = []; projectiles = []; orbiters = []; lasers = [];
+          return;
+        }
+      }
+
+      // side collision damage
+      if (player.invulnerable <= 0 && player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
+        player.health -= 1;
+        player.invulnerable = 90;
+        player.x = Math.max(10, player.x - 60);
+        try { new Audio('ow.mp3').play(); } catch (err) {}
+        if (player.health <= 0) {
+          player.lives -= 1;
+          if (player.lives <= 0) {
+            gameState = 'levelselect';
+            player.lives = 3; player.health = 3;
+          } else resetLevel(levelNum);
+        }
+      }
+
+      if (e.hitCooldown > 0) e.hitCooldown--;
+    }
+  }
+
+  // ---------- Flags ----------
+  const bossAlive = enemies.some(e => e.boss && e.hp > 0);
+  const normalAlive = enemies.some(e => !e.boss);
+  for (const f of flags) {
+    if (bossAlive || normalAlive) f.visible = false;
+    else f.visible = true;
+    if (!f.visible) continue;
+    if (imgFlag.complete) ctx.drawImage(imgFlag, worldToScreen(f.x), f.y, f.w, f.h);
+    else { ctx.fillStyle = 'yellow'; ctx.fillRect(worldToScreen(f.x), f.y, f.w, f.h); }
+
+    if (player.x + player.w > f.x && player.x < f.x + f.w && player.y + player.h > f.y) {
+      if (levelNum + 1 <= LEVEL_DATA.length) unlockLevel(levelNum + 1);
+      if (levelNum + 1 <= LEVEL_DATA.length) resetLevel(levelNum + 1);
+      gameState = 'levelselect';
+    }
+  }
+
+  // invulnerability
+  if (player.invulnerable > 0) player.invulnerable--;
 
   // HUD
-  ctx.fillStyle="black"; ctx.font="16px sans-serif"; ctx.fillText("Level "+levelNum,10,20); ctx.fillText("Health: "+player.health+" Lives: "+player.lives,10,40);
+  ctx.fillStyle = 'black';
+  ctx.font = '16px sans-serif';
+  ctx.fillText('Level ' + levelNum, 10, 20);
+  ctx.fillText('Health: ' + player.health + '  Lives: ' + player.lives, 10, 40);
 }
 
-// ---------- Game Loop ----------
-function gameLoop(now){
-  FRAME++; const dt=Math.min(0.05,(now-lastTime)/1000); lastTime=now; game.time+=dt; ctx.clearRect(0,0,canvas.width,canvas.height);
-  if(gameState==="playing" && !paused) runLevel(currentLevel);
-  else if(gameState==="menu"){ctx.fillStyle="black";ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle="white";ctx.font="28px sans-serif";ctx.fillText("SUPER CHIRK",50,50);}
+// ---------- Global keys (menu / level select / pause) ----------
+window.addEventListener('keydown', e => {
+  // Menu -> level select (Z)
+  if (gameState === 'menu' && e.key.toLowerCase() === 'z') {
+    gameState = 'levelselect';
+    return;
+  }
+
+  // Pause
+  if (e.key.toLowerCase() === 'p' && gameState === 'playing') {
+    paused = !paused;
+    return;
+  }
+
+  // In level select, allow 1/2/3 and return to menu with Z
+  if (gameState === 'levelselect') {
+    if (e.key === '1' && unlockedLevels.includes(1)) {
+      currentLevel = 1; resetLevel(1); gameState = 'playing'; return;
+    }
+    if (e.key === '2' && unlockedLevels.includes(2)) {
+      currentLevel = 2; resetLevel(2); gameState = 'playing'; return;
+    }
+    if (e.key === '3' && unlockedLevels.includes(3)) {
+      // trigger cutscene before boss level if you like (kept simple here)
+      // For parity with previous flows, we'll set cutscene then play boss level
+      gameState = 'cutscene';
+      return;
+    }
+    if (e.key.toLowerCase() === 'z') {
+      gameState = 'menu';
+      return;
+    }
+  }
+});
+
+// ---------- Main game loop ----------
+let lastTime = performance.now();
+function gameLoop(now) {
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  game.time += dt;
+  FRAME++;
+
+  // clear
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (gameState === 'menu') {
+    // draw menu with "Press Z to Start"
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '48px sans-serif';
+    ctx.fillText('SUPER CHIRK', canvas.width / 2 - 180, 180);
+    ctx.font = '24px sans-serif';
+    ctx.fillText('Press Z to Start', canvas.width / 2 - 90, 260);
+    ctx.font = '16px sans-serif';
+    ctx.fillText('P = Pause while playing', 20, canvas.height - 30);
+  } else if (gameState === 'levelselect') {
+    // draw level select
+    ctx.fillStyle = "black"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "white"; ctx.font = "24px sans-serif"; ctx.fillText("LEVEL SELECT", 50, 50);
+    unlockedLevels.forEach((lv, i) => ctx.fillText("Level " + lv, 60, 120 + i * 40));
+    ctx.font = "14px sans-serif";
+    ctx.fillText("Press 1/2/3 to start unlocked level. Press Z to return to menu.", 50, canvas.height - 40);
+  } else if (gameState === 'cutscene') {
+    ctx.fillStyle = 'black'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white'; ctx.font = '24px sans-serif';
+    ctx.fillText('A menacing presence approaches...', 120, 220);
+    // simple timed cutscene then start boss level
+    if (!game._cutsceneT) game._cutsceneT = 0;
+    game._cutsceneT += dt;
+    if (game._cutsceneT > 2.2) {
+      game._cutsceneT = 0;
+      currentLevel = 3;
+      resetLevel(3);
+      gameState = 'playing';
+    }
+  } else if (gameState === 'playing') {
+    if (!paused) runLevel(currentLevel);
+    else {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'white'; ctx.font = '32px sans-serif'; ctx.fillText('PAUSED', 120, 120);
+      ctx.font = '18px sans-serif'; ctx.fillText('Press P to Resume', 110, 170);
+    }
+  } else if (gameState === 'win') {
+    ctx.fillStyle = 'black'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white'; ctx.font = '28px sans-serif'; ctx.fillText('YOU WIN!', 50, 50);
+    ctx.font = '16px sans-serif'; ctx.fillText('Game permanently locked.', 50, 100);
+  }
+
   requestAnimationFrame(gameLoop);
 }
-let lastTime=performance.now();
 
-// ---------- Init ----------
-function startGame(){canvas=document.getElementById('game');ctx=canvas.getContext('2d');ctx.imageSmoothingEnabled=false;resetLevel(currentLevel);requestAnimationFrame(gameLoop);}
+// ---------- init / start ----------
+function startGame() {
+  canvas = document.getElementById('game');
+  ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  resetLevel(1);
+  requestAnimationFrame(gameLoop);
+}
+
+// start if images already loaded or onload handlers will call it
+if (imagesLoaded === allImages.length) startGame();
+
 </script>
 </body>
 </html>
+
+
